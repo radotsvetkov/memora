@@ -7,10 +7,10 @@ created: 2026-04-05T09:00:00Z
 updated: 2026-04-27T17:45:00Z
 summary: "Top-level map for active work streams."
 tags: [work, atlas]
-refs: [world-map, internorga]
+refs: [world-map, team-sync]
 ---
 # Work Atlas
 
 Tracks key projects and dependencies.
 
-See [[internorga]] and [[world-map]] for context.
+See [[team-sync]] and [[world-map]] for context.
