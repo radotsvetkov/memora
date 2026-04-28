@@ -150,14 +150,14 @@ pub fn render_body_with_offsets(body: &str) -> String {
     let mut out = String::new();
     let mut offset = 0usize;
     for line in body.split_inclusive('\n') {
-        out.push_str(&format!("[byte:{offset:04}] {line}"));
+        out.push_str(&format!("[byte:{offset:06}] {line}"));
         offset += line.len();
     }
     if !body.ends_with('\n') && !body.is_empty() {
         return out;
     }
     if body.is_empty() {
-        out.push_str("[byte:0000] ");
+        out.push_str("[byte:000000] ");
     }
     out
 }
@@ -272,8 +272,8 @@ mod tests {
     #[test]
     fn render_body_with_offsets_includes_byte_markers() {
         let rendered = render_body_with_offsets("aa\nbbb\n");
-        assert!(rendered.contains("[byte:0000] aa\n"));
-        assert!(rendered.contains("[byte:0003] bbb\n"));
+        assert!(rendered.contains("[byte:000000] aa\n"));
+        assert!(rendered.contains("[byte:000003] bbb\n"));
     }
 
     #[tokio::test]
