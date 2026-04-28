@@ -1,30 +1,64 @@
 # Memora
 
 Verifiable cognitive memory for personal Obsidian-compatible vaults.
-Rust + SQLite + MCP-native. Single binary. Local-first.
 
-**Status: pre-v0.1, in development.**
+Memora stores and retrieves **claims**, not just notes. Every claim maps to an exact source span and fingerprint, so citations are validated against your markdown before answers are trusted.
 
-## Pitch
+## Why Memora
 
-Every existing personal-memory tool retrieves *notes* and trusts the LLM to
-quote them faithfully. Memora retrieves *claims*: atomic factual statements
-extracted from your notes, each with a source-span pointer, validity window,
-and privacy band. Every LLM citation is architecturally validated against
-the source span — hallucinations are caught structurally, not via prompting.
+- Claim-graph memory with temporal validity windows.
+- Citation verification against source spans (`span_fingerprint`).
+- Privacy-aware extraction with inline secret markers.
+- Challenger loop for stale claims, contradictions, and frontier gaps.
+- MCP server and CLI in a single Rust-native stack.
 
-## What it gives you
+## Quickstart
 
-- **Verified citations.** Hallucinated claim ids are stripped before the
-  answer reaches you.
-- **Provenance with staleness propagation.** When you edit a note,
-  downstream synthesis is auto-marked rotten.
-- **Time-aware reasoning.** Claims have validity windows; "what was true in
-  March" actually works.
-- **Per-claim privacy.** Inline `secret` markers redact at the wire boundary
-  for cloud LLMs.
-- **Active challenger.** A daily worker surfaces contradictions, stale
-  dependencies, and frontier gaps in your world map.
+```bash
+cargo build --release
+./target/release/memora init --vault ./vault
+./target/release/memora index --vault ./vault
+./target/release/memora query "What changed?" --vault ./vault
+```
+
+More: `docs/quickstart.md`.
+
+## MCP integration (Claude Code)
+
+Example MCP server config:
+
+```json
+{
+  "mcpServers": {
+    "memora": {
+      "command": "/absolute/path/to/target/release/memora-mcp",
+      "env": {
+        "MEMORA_VAULT": "/absolute/path/to/vault",
+        "MEMORA_INDEX_DB": "/absolute/path/to/vault/.memora/memora.db",
+        "MEMORA_VECTOR_INDEX": "/absolute/path/to/vault/.memora/vectors"
+      }
+    }
+  }
+}
+```
+
+## Comparison highlight
+
+Memora's wedge is structural citation verification:
+
+- Most note-centric systems trust prompt obedience for citation correctness.
+- Memora re-opens source notes and re-hashes source spans for every cited claim.
+
+See full comparison: `docs/comparison.md`.
+
+## Docs
+
+- `docs/architecture.md`
+- `docs/vault-conventions.md`
+- `docs/mcp-tools.md`
+- `docs/citation-protocol.md`
+- `docs/comparison.md`
+- `docs/quickstart.md`
 
 ## License
 

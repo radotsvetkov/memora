@@ -1,5 +1,9 @@
 pub mod challenge;
 pub mod claims;
 pub mod consolidate;
+pub mod index;
+pub mod init;
 pub mod privacy;
 pub mod query;
+pub mod serve;
+pub mod watch;
