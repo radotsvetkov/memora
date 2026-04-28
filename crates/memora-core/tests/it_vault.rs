@@ -25,7 +25,7 @@ fn scan_finds_expected_fixture_paths() {
     let expected = BTreeSet::from([
         PathBuf::from("world_map.md"),
         PathBuf::from("work/_atlas.md"),
-        PathBuf::from("work/internorga.md"),
+        PathBuf::from("work/team-sync.md"),
         PathBuf::from("personal/example.md"),
     ]);
     assert_eq!(found, expected);
@@ -46,7 +46,7 @@ fn parsing_all_scanned_notes_succeeds_and_aggregates_wikilinks() {
     let expected_links = BTreeSet::from([
         "_atlas".to_string(),
         "example".to_string(),
-        "internorga".to_string(),
+        "team-sync".to_string(),
         "world-map".to_string(),
     ]);
     assert_eq!(links, expected_links);

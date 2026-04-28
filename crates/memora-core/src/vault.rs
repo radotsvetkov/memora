@@ -154,7 +154,7 @@ mod tests {
         let expected = BTreeSet::from([
             PathBuf::from("world_map.md"),
             PathBuf::from("work/_atlas.md"),
-            PathBuf::from("work/internorga.md"),
+            PathBuf::from("work/team-sync.md"),
             PathBuf::from("personal/example.md"),
         ]);
         assert_eq!(paths, expected);
