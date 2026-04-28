@@ -1,5 +1,6 @@
 //! Memora core: vault scanning, note parsing, claim graph, retrieval, validation.
 
+pub mod claims;
 pub mod embed;
 pub mod index;
 pub mod indexer;
@@ -8,6 +9,7 @@ pub mod note;
 pub mod retrieve;
 pub mod vault;
 
+pub use claims::{Claim, ClaimExtractor, ClaimRelation, ClaimStore};
 pub use embed::{normalize_text, Embedder, OpenAiEmbedder};
 pub use index::{Index, IndexError, NoteRow, RebuildStats, VectorIndex};
 pub use learn::QValueLearner;
