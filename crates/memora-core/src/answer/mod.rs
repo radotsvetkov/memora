@@ -1,0 +1,120 @@
+use std::collections::{HashMap, HashSet};
+
+use anyhow::Result;
+use memora_llm::{CompletionRequest, LlmClient, Message, Role};
+
+use crate::cite::{CitationStatus, CitationValidator, CitedAnswer};
+use crate::claims::{Claim, ClaimStore};
+use crate::retrieve::HybridRetriever;
+
+const ANSWER_SYSTEM_PROMPT: &str = "You answer using ONLY the verified claims. Every factual sentence must end with [claim:ID] for the supporting claim. If no claim supports a statement, omit it. Quote source text where relevant.";
+
+pub struct AnsweringPipeline<'a> {
+    pub retriever: &'a HybridRetriever<'a>,
+    pub claim_store: &'a ClaimStore<'a>,
+    pub validator: &'a CitationValidator<'a>,
+    pub llm: &'a dyn LlmClient,
+}
+
+impl<'a> AnsweringPipeline<'a> {
+    pub async fn answer(&self, query: &str, k: usize) -> Result<CitedAnswer> {
+        let hits = self.retriever.search(query, k).await?;
+        let top_hits = hits.into_iter().take(8).collect::<Vec<_>>();
+
+        let mut candidate_claims = Vec::new();
+        for hit in &top_hits {
+            candidate_claims.extend(self.claim_store.list_for_note(&hit.id)?);
+        }
+
+        let candidate_ids = candidate_claims
+            .iter()
+            .map(|claim| claim.id.clone())
+            .collect::<Vec<_>>();
+        let current_claims = self.claim_store.current_only(&candidate_ids)?;
+        let note_score = top_hits
+            .iter()
+            .map(|hit| (hit.id.clone(), hit.score))
+            .collect::<HashMap<_, _>>();
+        let ranked_claims = rank_claims_by_note_score(current_claims, &note_score, 12);
+
+        let prompt_context = format_claim_context(&ranked_claims);
+        let response = self
+            .llm
+            .complete(CompletionRequest {
+                model: None,
+                system: Some(ANSWER_SYSTEM_PROMPT.to_string()),
+                messages: vec![Message {
+                    role: Role::User,
+                    content: format!("{prompt_context}\n\nQuestion: {query}"),
+                }],
+                max_tokens: 1_200,
+                temperature: 0.1,
+                json_mode: false,
+            })
+            .await?;
+        let cited = self.validator.validate(&response.text).await?;
+        if cited.unverified_count + cited.mismatch_count == 0 {
+            return Ok(cited);
+        }
+
+        let verified_set = cited
+            .checks
+            .iter()
+            .filter(|check| check.status == CitationStatus::Verified)
+            .map(|check| check.claim_id.clone())
+            .collect::<HashSet<_>>();
+        let mut allowed_ids = verified_set.into_iter().collect::<Vec<_>>();
+        allowed_ids.sort();
+
+        let retry_system = format!(
+            "{ANSWER_SYSTEM_PROMPT} Use ONLY these claim ids: {}. Do not emit any other [claim:...] marker.",
+            allowed_ids.join(", ")
+        );
+        let retry = self
+            .llm
+            .complete(CompletionRequest {
+                model: None,
+                system: Some(retry_system),
+                messages: vec![Message {
+                    role: Role::User,
+                    content: format!("{prompt_context}\n\nQuestion: {query}"),
+                }],
+                max_tokens: 1_200,
+                temperature: 0.0,
+                json_mode: false,
+            })
+            .await?;
+        let mut cited_retry = self.validator.validate(&retry.text).await?;
+        if cited_retry.unverified_count + cited_retry.mismatch_count > 0 {
+            cited_retry.degraded = true;
+        }
+        Ok(cited_retry)
+    }
+}
+
+fn rank_claims_by_note_score(
+    mut claims: Vec<Claim>,
+    note_score: &HashMap<String, f32>,
+    limit: usize,
+) -> Vec<Claim> {
+    claims.sort_by(|a, b| {
+        let score_a = note_score.get(&a.note_id).copied().unwrap_or_default();
+        let score_b = note_score.get(&b.note_id).copied().unwrap_or_default();
+        score_b
+            .partial_cmp(&score_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    claims.truncate(limit);
+    claims
+}
+
+fn format_claim_context(claims: &[Claim]) -> String {
+    let mut out = String::from("Verified claims (cite these with [claim:ID] markers):\n");
+    for claim in claims {
+        out.push_str(&format!(
+            "- [claim:{}] {} {} {}\n",
+            claim.id, claim.subject, claim.predicate, claim.object
+        ));
+    }
+    out
+}

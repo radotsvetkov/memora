@@ -8,3 +8,8 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+blake3.workspace = true
+memora-core = { path = "../memora-core" }
+memora-llm = { path = "../memora-llm" }
