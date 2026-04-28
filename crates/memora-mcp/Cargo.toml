@@ -5,6 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+authors.workspace = true
+
+[package.metadata.wix]
+upgrade-guid = "AA2BED65-EB5E-4F1A-8CB6-A70CFDF6E781"
+path-guid = "CC01C538-6ED1-4F4D-9341-C3BFF10420DC"
+license = false
+eula = false
 
 [[bin]]
 name = "memora-mcp"

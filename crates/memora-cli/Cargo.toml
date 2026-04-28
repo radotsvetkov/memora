@@ -5,6 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+authors.workspace = true
+
+[package.metadata.wix]
+upgrade-guid = "6DC48B12-C94B-4D32-8C5A-44CA13245270"
+path-guid = "6037C433-77D1-4F71-A98D-95AC2249AEC6"
+license = false
+eula = false
 
 [[bin]]
 name = "memora"

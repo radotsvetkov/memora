@@ -5,6 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+authors.workspace = true
+
+[package.metadata.wix]
+upgrade-guid = "22CE1CC0-3DF9-412C-A6FE-BB178CF3A460"
+path-guid = "9C3FAC2C-DB8F-4668-8457-2BFA5A92B237"
+license = false
+eula = false
 
 [[bin]]
 name = "bench_locomo"
