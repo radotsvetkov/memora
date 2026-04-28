@@ -19,6 +19,7 @@ pub struct CitedAnswer {
     pub verified_count: usize,
     pub unverified_count: usize,
     pub mismatch_count: usize,
+    pub redacted_count: usize,
     pub degraded: bool,
 }
 

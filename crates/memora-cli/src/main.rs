@@ -16,6 +16,10 @@ enum Commands {
         #[command(subcommand)]
         command: commands::claims::ClaimsCommand,
     },
+    Privacy {
+        #[command(subcommand)]
+        command: commands::privacy::PrivacyCommand,
+    },
     Query(commands::query::QueryArgs),
 }
 
@@ -24,6 +28,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Claims { command } => commands::claims::run(command)?,
+        Commands::Privacy { command } => commands::privacy::run(command)?,
         Commands::Query(args) => commands::query::run(args).await?,
     }
     Ok(())
