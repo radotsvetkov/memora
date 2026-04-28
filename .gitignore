@@ -1,4 +1,5 @@
 target/
+/target/
 .memora/
 *.bin
 *.db
@@ -10,6 +11,10 @@ target/
 .env.local
 .idea/
 .vscode/
+.cursor/
+.specstory/
+.editorconfig
 *.swp
+**/*.rs.bk
 CHECKPOINT-*.md
 PRECHECK-FAIL.md
