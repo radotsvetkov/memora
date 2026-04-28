@@ -212,6 +212,97 @@ impl Index {
         Ok(ids)
     }
 
+    pub fn wikilink_targets(&self, src_id: &str) -> Result<Vec<String>, IndexError> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn
+            .prepare("SELECT dst_target FROM wikilinks WHERE src_id = ? ORDER BY dst_target ASC")?;
+        let rows = stmt.query_map(params![src_id], |row| row.get::<_, String>(0))?;
+        let mut targets = Vec::new();
+        for row in rows {
+            targets.push(row?);
+        }
+        Ok(targets)
+    }
+
+    pub fn note_id_for_target(&self, target: &str) -> Result<Option<String>, IndexError> {
+        let conn = self.pool.get()?;
+        conn.query_row(
+            "SELECT id FROM notes WHERE id = ?",
+            params![target],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(IndexError::from)
+    }
+
+    pub fn qvalue(&self, id: &str) -> Result<Option<f32>, IndexError> {
+        let conn = self.pool.get()?;
+        conn.query_row(
+            "SELECT qvalue FROM notes WHERE id = ?",
+            params![id],
+            |row| row.get::<_, f32>(0),
+        )
+        .optional()
+        .map_err(IndexError::from)
+    }
+
+    pub fn hebbian_neighbors(
+        &self,
+        id: &str,
+        top_n: usize,
+    ) -> Result<Vec<(String, f32)>, IndexError> {
+        let top_n = i64::try_from(top_n)
+            .map_err(|_| IndexError::Schema("top_n does not fit in i64".to_string()))?;
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT b_id, weight FROM hebbian_edges WHERE a_id = ?
+             UNION
+             SELECT a_id, weight FROM hebbian_edges WHERE b_id = ?
+             ORDER BY weight DESC
+             LIMIT ?",
+        )?;
+        let rows = stmt.query_map(params![id, id, top_n], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f32>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn record_retrieval(
+        &self,
+        query_id: &str,
+        query_text: &str,
+        claim_ids: &[String],
+    ) -> Result<(), IndexError> {
+        let claim_ids_json = serde_json::to_string(claim_ids)?;
+        let conn = self.pool.get()?;
+        conn.execute(
+            "INSERT INTO retrievals (query_id, query_text, claim_ids_json, ts, marked_useful_json)
+             VALUES (?, ?, ?, ?, NULL)",
+            params![
+                query_id,
+                query_text,
+                claim_ids_json,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn with_transaction<T, F>(&self, f: F) -> Result<T, IndexError>
+    where
+        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T, IndexError>,
+    {
+        let mut conn = self.pool.get()?;
+        let tx = conn.transaction()?;
+        let result = f(&tx)?;
+        tx.commit()?;
+        Ok(result)
+    }
+
     pub(crate) fn id_by_path(&self, path: &Path) -> Result<Option<String>, IndexError> {
         let conn = self.pool.get()?;
         let path = path.to_string_lossy().to_string();
