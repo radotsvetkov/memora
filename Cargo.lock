@@ -1890,6 +1890,7 @@ dependencies = [
  "memora-core",
  "memora-llm",
  "regex",
+ "serde_json",
  "tempfile",
  "tokio",
 ]

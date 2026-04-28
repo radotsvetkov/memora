@@ -6,6 +6,7 @@ use chrono::{Local, NaiveTime, TimeDelta};
 use memora_llm::LlmClient;
 use tokio::task::JoinHandle;
 
+use crate::challenger::{Challenger, ChallengerConfig};
 use crate::claims::ClaimStore;
 use crate::consolidate::{AtlasWriter, WorldMapWriter};
 use crate::index::Index;
@@ -23,13 +24,27 @@ impl Default for ConsolidationScheduleConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ChallengerScheduleConfig {
+    pub daily_at: String,
+}
+
+impl Default for ChallengerScheduleConfig {
+    fn default() -> Self {
+        Self {
+            daily_at: "07:00".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SchedulerConfig {
     pub consolidation: ConsolidationScheduleConfig,
+    pub challenger: ChallengerScheduleConfig,
 }
 
 pub struct Scheduler {
-    handle: JoinHandle<()>,
+    handles: Vec<JoinHandle<()>>,
 }
 
 impl Scheduler {
@@ -39,23 +54,27 @@ impl Scheduler {
         llm: Arc<dyn LlmClient>,
         vault: PathBuf,
     ) -> Self {
-        let handle = tokio::spawn(async move {
+        let consolidation_vault = vault.clone();
+        let consolidation_llm = llm.clone();
+        let consolidation_db = db.clone();
+        let consolidation_cfg = config.consolidation.daily_at.clone();
+        let consolidation_handle = tokio::spawn(async move {
             loop {
-                let delay = time_until_next_tick(&config.consolidation.daily_at);
+                let delay = time_until_next_tick(&consolidation_cfg);
                 tokio::time::sleep(delay).await;
 
-                let claim_store = ClaimStore::new(&db);
+                let claim_store = ClaimStore::new(&consolidation_db);
                 let atlas = AtlasWriter {
-                    db: &db,
+                    db: &consolidation_db,
                     claim_store: &claim_store,
-                    llm: llm.as_ref(),
-                    vault: &vault,
+                    llm: consolidation_llm.as_ref(),
+                    vault: &consolidation_vault,
                 };
                 let world = WorldMapWriter {
-                    db: &db,
+                    db: &consolidation_db,
                     claim_store: &claim_store,
-                    llm: llm.as_ref(),
-                    vault: &vault,
+                    llm: consolidation_llm.as_ref(),
+                    vault: &consolidation_vault,
                 };
 
                 let report = atlas.rebuild_all_changed().await;
@@ -70,11 +89,47 @@ impl Scheduler {
                 }
             }
         });
-        Self { handle }
+
+        let challenger_vault = vault.clone();
+        let challenger_llm = llm.clone();
+        let challenger_db = db.clone();
+        let challenger_cfg = config.challenger.daily_at.clone();
+        let challenger_handle = tokio::spawn(async move {
+            loop {
+                let delay = time_until_next_tick(&challenger_cfg);
+                tokio::time::sleep(delay).await;
+
+                let claim_store = ClaimStore::new(&challenger_db);
+                let challenger = Challenger {
+                    db: &challenger_db,
+                    claim_store: &claim_store,
+                    llm: challenger_llm.as_ref(),
+                    vault: &challenger_vault,
+                    config: ChallengerConfig::default(),
+                };
+
+                match challenger.run_once().await {
+                    Ok(report) => {
+                        if let Err(err) = challenger.persist_report(&report) {
+                            tracing::warn!(error = %err, "challenger scheduler write failed");
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(error = %err, "challenger scheduler tick failed");
+                    }
+                }
+            }
+        });
+
+        Self {
+            handles: vec![consolidation_handle, challenger_handle],
+        }
     }
 
     pub fn abort(self) {
-        self.handle.abort();
+        for handle in self.handles {
+            handle.abort();
+        }
     }
 }
 
