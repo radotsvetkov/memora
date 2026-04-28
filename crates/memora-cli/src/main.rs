@@ -16,12 +16,15 @@ enum Commands {
         #[command(subcommand)]
         command: commands::claims::ClaimsCommand,
     },
+    Query(commands::query::QueryArgs),
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Claims { command } => commands::claims::run(command)?,
+        Commands::Query(args) => commands::query::run(args).await?,
     }
     Ok(())
 }
