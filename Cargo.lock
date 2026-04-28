@@ -1884,7 +1884,12 @@ name = "memora-cli"
 version = "0.1.0-dev"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "blake3",
  "clap",
+ "memora-core",
+ "memora-llm",
+ "tokio",
 ]
 
 [[package]]
