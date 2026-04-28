@@ -1,0 +1,48 @@
+---
+description: Claim Graph invariants — applies to claim handling code
+globs: ["**/claims/**/*.rs", "**/cite/**/*.rs", "**/extractor*.rs"]
+---
+
+# Claim Graph Invariants
+
+## Identity
+A claim id is blake3(format!("{s}|{p}|{o}|{note_id}|{span_start}"))
+truncated to 16 hex chars. Never let the LLM mint claim ids.
+
+## Span fingerprint
+Computed as blake3(body[span_start..span_end]).
+Stored at extraction time. Recomputed at validation time.
+
+## Extraction validation — done in Rust, not the LLM
+After receiving JSON from the extractor LLM, for each claim:
+1. Verify span_start < span_end and within body length.
+2. Verify the span contains non-whitespace, non-empty text.
+3. Reject if span < 5 chars or > 300 chars.
+4. Compute fingerprint, store.
+5. Reject claims with empty subject, predicate, or object.
+6. Reject claims whose fields are verbatim "..." or "[redacted]".
+
+## Validity windows
+- valid_from is required (never null).
+- valid_until is null for "current".
+- When superseding: set old.valid_until = new.valid_from.
+- Never edit a claim's valid_from after creation.
+
+## Privacy inheritance
+1. Note-level privacy is the floor.
+2. Inline markers override for spans inside.
+3. A claim's privacy = max(note_privacy, marker_privacy).
+   Order: public < private < secret.
+
+## Storage discipline
+- Never delete claims directly when a note is edited; delete-by-(note_id)
+  and re-extract within a transaction.
+
+## Embedding text
+The text embedded for a claim is format!("{} {} {}", s, p, o),
+lowercased, with multiple whitespace collapsed.
+
+## Forbidden
+- Storing the source body inside a claim row.
+- Letting the extractor LLM specify a claim id (compute it in Rust).
+- Skipping span validation because "the LLM probably got it right".

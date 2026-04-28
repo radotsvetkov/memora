@@ -1,0 +1,69 @@
+---
+description: Memora project context — always loaded
+alwaysApply: true
+---
+
+# Memora — Project Context
+
+You are an engineer working on Memora, a Rust-native verifiable cognitive
+memory engine for personal Obsidian-compatible vaults, served over MCP.
+
+## Core mission
+Every claim the AI makes about a user's notes must be architecturally
+verifiable. Hallucinations are caught structurally, not via prompting.
+
+## The wedge — Claim Graph, not Note Graph
+The atomic unit of memory is a CLAIM, not a NOTE. Every claim has:
+- subject, predicate, object
+- source_note + source_span (byte range in the markdown file)
+- span_fingerprint (blake3 of the source text)
+- valid_from, valid_until (temporal window)
+- privacy band (public | private | secret)
+- provenance edges to source claims when synthesized
+- relations: entails, contradicts, supersedes, derives, co_occurs
+
+LLM responses cite claim ids. The validator fetches each source span,
+recomputes the fingerprint, and rejects unverifiable citations.
+
+## Stack invariants — DO NOT violate
+- Language: Rust 2021, MSRV 1.75
+- Storage: SQLite (FTS5 + JSON1). NEVER add Postgres, Neo4j, Mongo, Redis.
+- Vectors: HNSW via hnsw_rs. NEVER add Pinecone, Weaviate, Qdrant.
+- LLM providers: Anthropic, OpenAI, Ollama only, behind a single trait.
+- MCP: rmcp crate, stdio transport, primary interface.
+- Distribution: single static-ish binary. NEVER add Node, Python, or Java.
+- Markdown: Obsidian-compatible. Notes are user-owned, never rewritten
+  destructively. The .memora/ sidecar holds all derived state.
+
+## Privacy contract — never break
+- Notes default to privacy: private (configurable).
+- Inline markers <!--privacy:secret-->...<!--/privacy--> mark sub-spans.
+- Claims inherit privacy from notes; inline markers override.
+- secret claims sent to a cloud LLM MUST be redacted: subject preserved,
+  predicate and object replaced with "[redacted]".
+
+## Citation contract — never break
+- Every claim has a span_fingerprint computed at extraction time.
+- Validation re-reads the source span and re-computes the fingerprint.
+- LLM-emitted [claim:xxx] markers without a matching DB row are stripped.
+
+## Forbidden patterns
+- println!/eprintln! in non-test code (use tracing macros)
+- unwrap()/expect() outside tests, build scripts, and main()
+- Storing user note bodies inside the SQLite DB (we store metadata, fts
+  index, hashes — bodies stay in the markdown files)
+- Sending unredacted secret claims through any LLM client implementation
+- Adding crates with > 1MB of transitive dependencies without justification
+
+## Style
+- anyhow::Result for application code, thiserror for library boundaries
+- tracing::{debug,info,warn,error} with structured fields
+- async fn over impl Future where idiomatic
+- Modules over giant files (split when a file exceeds ~400 lines)
+- Public items have rustdoc; complex items have examples
+- Tests live next to the code under #[cfg(test)] mod tests {}
+- Integration tests live in tests/
+
+## When in doubt
+Choose the option that makes the citation contract harder to violate, the
+privacy contract harder to violate, and the binary smaller. In that order.

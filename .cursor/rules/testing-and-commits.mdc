@@ -1,0 +1,35 @@
+---
+description: Testing and commit hygiene
+alwaysApply: true
+---
+
+# Testing and Commit Hygiene
+
+## Test layering
+- Unit tests inside the module: pure logic, mocked I/O.
+- Integration tests in tests/: spin up a temp vault, exercise public API.
+- End-to-end: spin up the MCP server in-process, send tool calls.
+- Mock LLMs with TestLlmClient that returns canned responses.
+
+## Coverage targets
+- Every public function: at least one unit test.
+- Every MCP tool: at least one integration test.
+- Every privacy / citation rule: dedicated test that fails if rule is broken.
+
+## Commit messages — Conventional Commits
+- feat(scope): ... | fix(scope): ... | refactor(scope): ... |
+  test(scope): ... | docs(scope): ... | chore: ...
+- Scopes: core, llm, mcp, cli, claims, cite, privacy, consolidate, challenger
+
+## When to commit
+- After each prompt's cargo test --all passes.
+- One commit per phase minimum.
+- Never commit broken tests or clippy failures.
+
+## When to push
+- After every phase passes review.
+
+## CI must pass for every PR
+- cargo fmt --check
+- cargo clippy --all-targets -- -D warnings
+- cargo test --all
