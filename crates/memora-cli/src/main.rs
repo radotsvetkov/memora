@@ -16,6 +16,7 @@ enum Commands {
         #[command(subcommand)]
         command: commands::claims::ClaimsCommand,
     },
+    Challenge(commands::challenge::ChallengeArgs),
     Consolidate(commands::consolidate::ConsolidateArgs),
     Privacy {
         #[command(subcommand)]
@@ -29,6 +30,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Claims { command } => commands::claims::run(command)?,
+        Commands::Challenge(args) => commands::challenge::run(args).await?,
         Commands::Consolidate(args) => commands::consolidate::run(args).await?,
         Commands::Privacy { command } => commands::privacy::run(command)?,
         Commands::Query(args) => commands::query::run(args).await?,
