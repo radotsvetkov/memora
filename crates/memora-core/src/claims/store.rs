@@ -151,7 +151,7 @@ impl<'a> ClaimStore<'a> {
             "SELECT id, subject, predicate, object, note_id, span_start, span_end, span_fingerprint,
                     valid_from, valid_until, confidence, privacy, extracted_by, extracted_at
              FROM claims
-             WHERE subject = ? AND predicate = ?
+             WHERE subject = ? AND predicate = ? AND valid_until IS NULL
              ORDER BY valid_from DESC",
         )?;
         let rows = stmt.query_map(params![subject, predicate], map_claim_row)?;
@@ -168,7 +168,7 @@ impl<'a> ClaimStore<'a> {
             "SELECT id, subject, predicate, object, note_id, span_start, span_end, span_fingerprint,
                     valid_from, valid_until, confidence, privacy, extracted_by, extracted_at
              FROM claims
-             WHERE subject = ?
+             WHERE subject = ? AND valid_until IS NULL
              ORDER BY valid_from DESC",
         )?;
         let rows = stmt.query_map(params![subject], map_claim_row)?;
@@ -369,4 +369,100 @@ fn map_claim_row_from_offset(
         extracted_by: row.get(offset + 12)?,
         extracted_at,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use chrono::TimeZone;
+    use rusqlite::params;
+
+    use super::*;
+    use crate::index::Index;
+
+    fn seed_note(index: &Index, note_id: &str) -> Result<(), IndexError> {
+        let conn = index.pool.get()?;
+        conn.execute(
+            "INSERT INTO notes
+             (id, path, region, source, privacy, body_hash, body_size, summary, tags_json, created, updated, qvalue)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                note_id,
+                format!("vault/{note_id}.md"),
+                "test/unit",
+                "personal",
+                "private",
+                "body-hash",
+                16_i64,
+                "test note",
+                "[]",
+                "2024-01-01T00:00:00Z",
+                "2024-01-01T00:00:00Z",
+                0.0_f64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn make_claim(
+        note_id: &str,
+        object: &str,
+        valid_from: chrono::DateTime<Utc>,
+        valid_until: Option<chrono::DateTime<Utc>>,
+    ) -> Claim {
+        Claim {
+            id: Claim::compute_id("X", "works_at", object, note_id, 0),
+            subject: "X".to_string(),
+            predicate: "works_at".to_string(),
+            object: object.to_string(),
+            note_id: note_id.to_string(),
+            span_start: 0,
+            span_end: 4,
+            span_fingerprint: Claim::compute_fingerprint(object),
+            valid_from,
+            valid_until,
+            confidence: 1.0,
+            privacy: Privacy::Private,
+            extracted_by: "test/unit".to_string(),
+            extracted_at: valid_from,
+        }
+    }
+
+    #[test]
+    fn find_by_subject_and_predicate_return_only_current_claims() -> Result<(), IndexError> {
+        let index = Index::open(Path::new(":memory:"))?;
+        seed_note(&index, "note-x")?;
+        let store = ClaimStore::new(&index);
+
+        let t1 = Utc
+            .with_ymd_and_hms(2024, 1, 1, 0, 0, 0)
+            .single()
+            .expect("valid datetime");
+        let t2 = Utc
+            .with_ymd_and_hms(2024, 6, 1, 0, 0, 0)
+            .single()
+            .expect("valid datetime");
+        let t3 = Utc
+            .with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
+            .single()
+            .expect("valid datetime");
+
+        let claim_a = make_claim("note-x", "Co1", t1, Some(t2));
+        let claim_b = make_claim("note-x", "Co2", t2, Some(t3));
+        let claim_c = make_claim("note-x", "Co3", t3, None);
+        store.upsert(&claim_a)?;
+        store.upsert(&claim_b)?;
+        store.upsert(&claim_c)?;
+
+        let by_subject_predicate = store.find_by_subject_predicate("X", "works_at")?;
+        assert_eq!(by_subject_predicate.len(), 1);
+        assert_eq!(by_subject_predicate[0].id, claim_c.id);
+
+        let by_subject = store.find_by_subject("X")?;
+        assert_eq!(by_subject.len(), 1);
+        assert_eq!(by_subject[0].id, claim_c.id);
+
+        Ok(())
+    }
 }
