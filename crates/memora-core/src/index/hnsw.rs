@@ -192,6 +192,14 @@ impl VectorIndex {
         Ok(())
     }
 
+    /// Loads an existing HNSW graph from disk.
+    ///
+    /// This intentionally uses `Box::leak` for `HnswIo` because `hnsw_rs` requires
+    /// `HnswIo` to outlive the loaded `Hnsw`. The leak is bounded (at most once per
+    /// process startup when an existing index is loaded), and we accept leaking this
+    /// small struct rather than restructuring ownership in this phase.
+    ///
+    /// Cleanup is tracked for Phase 12.
     fn load_hnsw(path: &Path) -> Result<Hnsw<'static, f32, DistCosine>> {
         let (dir, basename) = Self::hnsw_dir_and_basename(path)?;
         let io = Box::leak(Box::new(HnswIo::new(&dir, &basename)));
