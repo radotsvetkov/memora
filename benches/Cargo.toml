@@ -1,0 +1,27 @@
+[package]
+name = "memora-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "bench_locomo"
+path = "src/bin/bench_locomo.rs"
+
+[[bin]]
+name = "bench_personal_vault"
+path = "src/bin/bench_personal_vault.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tempfile.workspace = true
+blake3.workspace = true
+memora-core = { path = "../crates/memora-core" }
+memora-llm = { path = "../crates/memora-llm" }

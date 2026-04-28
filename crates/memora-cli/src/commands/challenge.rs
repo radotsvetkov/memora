@@ -1,29 +1,34 @@
-use std::path::PathBuf;
-
 use anyhow::Result;
 use clap::Args;
-use memora_core::{Challenger, ChallengerConfig, ClaimStore, Index};
+use memora_core::{Challenger, ChallengerConfig, ClaimStore};
 use memora_llm::{make_client, LlmProvider};
+
+use crate::config::AppConfig;
+use crate::runtime::open_index;
 
 #[derive(Debug, Args)]
 pub struct ChallengeArgs {
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
     #[arg(long, default_value = "vault")]
-    pub vault_root: PathBuf,
-    #[arg(long, default_value = ".memora/memora.db")]
-    pub index_db: PathBuf,
+    pub vault: std::path::PathBuf,
 }
 
 pub async fn run(args: ChallengeArgs) -> Result<()> {
-    let index = Index::open(&args.index_db)?;
+    let cfg = AppConfig::load(&args.vault)?;
+    let index = open_index(&args.vault)?;
     let claim_store = ClaimStore::new(&index);
-    let llm = make_client(LlmProvider::Ollama, None)?;
+    let provider = match cfg.llm.provider.as_str() {
+        "anthropic" => LlmProvider::Anthropic,
+        "openai" => LlmProvider::OpenAi,
+        _ => LlmProvider::Ollama,
+    };
+    let llm = make_client(provider, cfg.llm.model.clone())?;
     let challenger = Challenger {
         db: &index,
         claim_store: &claim_store,
         llm: llm.as_ref(),
-        vault: &args.vault_root,
+        vault: &args.vault,
         config: ChallengerConfig::default(),
     };
 

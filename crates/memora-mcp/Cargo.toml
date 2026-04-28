@@ -4,5 +4,27 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "memora-mcp"
+path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+rusqlite.workspace = true
+blake3.workspace = true
+memora-core = { path = "../memora-core" }
+memora-llm = { path = "../memora-llm" }
+rmcp = { version = "0.1", features = ["transport-io"] }
+
+[dev-dependencies]
+tempfile.workspace = true

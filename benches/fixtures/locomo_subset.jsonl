@@ -1,0 +1,3 @@
+{"query":"Which region tracks project architecture?","expected_note_id":"work-architecture"}
+{"query":"Where is salary information noted?","expected_note_id":"personal-finance"}
+{"query":"What claim references launch timeline?","expected_note_id":"ops-launch"}
