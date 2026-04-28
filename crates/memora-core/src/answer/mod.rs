@@ -5,15 +5,38 @@ use memora_llm::{CompletionRequest, LlmClient, Message, Role};
 
 use crate::cite::{CitationStatus, CitationValidator, CitedAnswer};
 use crate::claims::{Claim, ClaimStore};
+use crate::config::PrivacyConfig;
+use crate::privacy::{PrivacyFilter, RedactedClaim};
 use crate::retrieve::HybridRetriever;
 
 const ANSWER_SYSTEM_PROMPT: &str = "You answer using ONLY the verified claims. Every factual sentence must end with [claim:ID] for the supporting claim. If no claim supports a statement, omit it. Quote source text where relevant.";
 
+/// ```compile_fail
+/// use memora_core::answer::AnsweringPipeline;
+/// use memora_core::{ClaimStore, CitationValidator, HybridRetriever};
+/// use memora_llm::LlmClient;
+///
+/// fn build<'a>(
+///     retriever: &'a HybridRetriever<'a>,
+///     claim_store: &'a ClaimStore<'a>,
+///     validator: &'a CitationValidator<'a>,
+///     llm: &'a dyn LlmClient,
+/// ) {
+///     let _pipeline = AnsweringPipeline {
+///         retriever,
+///         claim_store,
+///         validator,
+///         llm,
+///     };
+/// }
+/// ```
 pub struct AnsweringPipeline<'a> {
     pub retriever: &'a HybridRetriever<'a>,
     pub claim_store: &'a ClaimStore<'a>,
     pub validator: &'a CitationValidator<'a>,
     pub llm: &'a dyn LlmClient,
+    pub privacy_filter: PrivacyFilter,
+    pub privacy_config: PrivacyConfig,
 }
 
 impl<'a> AnsweringPipeline<'a> {
@@ -36,8 +59,15 @@ impl<'a> AnsweringPipeline<'a> {
             .map(|hit| (hit.id.clone(), hit.score))
             .collect::<HashMap<_, _>>();
         let ranked_claims = rank_claims_by_note_score(current_claims, &note_score, 12);
+        let (redacted, stats) = self.privacy_filter.filter(&ranked_claims);
+        if self.privacy_config.warn_on_secret_query && stats.redacted > 0 {
+            tracing::warn!(
+                redacted = stats.redacted,
+                "query touched secret claims; cloud LLM received redacted versions"
+            );
+        }
 
-        let prompt_context = format_claim_context(&ranked_claims);
+        let prompt_context = format_claim_context(&redacted);
         let response = self
             .llm
             .complete(CompletionRequest {
@@ -52,7 +82,8 @@ impl<'a> AnsweringPipeline<'a> {
                 json_mode: false,
             })
             .await?;
-        let cited = self.validator.validate(&response.text).await?;
+        let mut cited = self.validator.validate(&response.text).await?;
+        cited.redacted_count = stats.redacted;
         if cited.unverified_count + cited.mismatch_count == 0 {
             return Ok(cited);
         }
@@ -85,6 +116,7 @@ impl<'a> AnsweringPipeline<'a> {
             })
             .await?;
         let mut cited_retry = self.validator.validate(&retry.text).await?;
+        cited_retry.redacted_count = stats.redacted;
         if cited_retry.unverified_count + cited_retry.mismatch_count > 0 {
             cited_retry.degraded = true;
         }
@@ -108,7 +140,7 @@ fn rank_claims_by_note_score(
     claims
 }
 
-fn format_claim_context(claims: &[Claim]) -> String {
+fn format_claim_context(claims: &[RedactedClaim]) -> String {
     let mut out = String::from("Verified claims (cite these with [claim:ID] markers):\n");
     for claim in claims {
         out.push_str(&format!(

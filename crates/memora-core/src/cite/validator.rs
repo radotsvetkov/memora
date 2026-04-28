@@ -87,6 +87,7 @@ impl<'a> CitationValidator<'a> {
             verified_count,
             unverified_count,
             mismatch_count,
+            redacted_count: 0,
             degraded: false,
         })
     }

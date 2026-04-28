@@ -6,7 +6,7 @@ use clap::Args;
 use memora_core::answer::AnsweringPipeline;
 use memora_core::cite::CitationValidator;
 use memora_core::claims::ClaimStore;
-use memora_core::{Embedder, HybridRetriever, Index, VectorIndex};
+use memora_core::{Embedder, HybridRetriever, Index, PrivacyConfig, PrivacyFilter, VectorIndex};
 use memora_llm::{make_client, LlmProvider};
 
 #[derive(Debug, Args)]
@@ -44,6 +44,8 @@ pub async fn run(args: QueryArgs) -> Result<()> {
         claim_store: &store,
         validator: &validator,
         llm: llm.as_ref(),
+        privacy_filter: PrivacyFilter::new_for(LlmProvider::Ollama),
+        privacy_config: PrivacyConfig::default(),
     };
     let answer = pipeline.answer(&args.text, args.k).await?;
     println!("{}", answer.clean_text);

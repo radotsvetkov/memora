@@ -1889,6 +1889,8 @@ dependencies = [
  "clap",
  "memora-core",
  "memora-llm",
+ "regex",
+ "tempfile",
  "tokio",
 ]
 
