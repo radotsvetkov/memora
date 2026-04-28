@@ -33,6 +33,7 @@ secrecy.workspace = true
 memora-llm = { path = "../memora-llm" }
 fastembed = { version = "4", optional = true }
 serde_yaml = "0.9"
+uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
