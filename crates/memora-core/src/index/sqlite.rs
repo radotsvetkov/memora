@@ -47,7 +47,7 @@ pub struct RebuildStats {
 }
 
 pub struct Index {
-    pool: Pool<SqliteConnectionManager>,
+    pub(crate) pool: Pool<SqliteConnectionManager>,
 }
 
 impl Index {

@@ -2,9 +2,11 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 
+use crate::claims::{ClaimExtractor, ClaimStore};
 use crate::embed::{normalize_text, Embedder};
 use crate::index::{Index, RebuildStats, VectorIndex};
 use crate::note;
+use crate::note::NoteSource;
 use crate::vault::{scan, Vault, VaultEvent};
 
 pub struct Indexer<'a> {
@@ -12,6 +14,9 @@ pub struct Indexer<'a> {
     pub index: &'a Index,
     pub embedder: Arc<dyn Embedder>,
     pub vector_index: Arc<Mutex<VectorIndex>>,
+    pub claim_extractor: Option<ClaimExtractor<'a>>,
+    pub claim_store: Option<ClaimStore<'a>>,
+    pub extract_reference_notes: bool,
 }
 
 impl<'a> Indexer<'a> {
@@ -26,7 +31,25 @@ impl<'a> Indexer<'a> {
             index,
             embedder,
             vector_index,
+            claim_extractor: None,
+            claim_store: None,
+            extract_reference_notes: false,
         }
+    }
+
+    pub fn with_claims(
+        mut self,
+        claim_extractor: ClaimExtractor<'a>,
+        claim_store: ClaimStore<'a>,
+    ) -> Self {
+        self.claim_extractor = Some(claim_extractor);
+        self.claim_store = Some(claim_store);
+        self
+    }
+
+    pub fn with_reference_claim_extraction(mut self, enabled: bool) -> Self {
+        self.extract_reference_notes = enabled;
+        self
     }
 
     pub async fn full_rebuild(&self) -> Result<RebuildStats> {
@@ -90,6 +113,20 @@ impl<'a> Indexer<'a> {
 
     async fn upsert_note(&self, parsed: &crate::note::Note) -> Result<()> {
         self.index.upsert_note(parsed, &parsed.body)?;
+        if let (Some(extractor), Some(claim_store)) = (&self.claim_extractor, &self.claim_store) {
+            let should_extract =
+                self.extract_reference_notes || parsed.fm.source != NoteSource::Reference;
+            if should_extract {
+                let claims = extractor.extract(parsed, &parsed.body).await?;
+                self.index.with_transaction(|tx| {
+                    claim_store.delete_for_note_in_tx(tx, &parsed.fm.id)?;
+                    for claim in &claims {
+                        claim_store.upsert_in_tx(tx, claim)?;
+                    }
+                    Ok(())
+                })?;
+            }
+        }
         let text = make_embedding_text(&parsed.fm.summary, &parsed.body);
         let vectors = self.embedder.embed(&[text]).await?;
         let vector = vectors
