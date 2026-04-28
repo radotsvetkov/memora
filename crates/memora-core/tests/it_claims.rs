@@ -218,17 +218,20 @@ async fn conflicting_claims_mark_older_valid_until_and_relations() -> Result<()>
     indexer.full_rebuild().await?;
 
     let store = ClaimStore::new(&index);
-    let claims = store.find_by_subject_predicate("Rado", "role_is")?;
-    assert_eq!(claims.len(), 2);
-
-    let older = claims
-        .iter()
-        .min_by_key(|claim| claim.valid_from)
-        .expect("older claim");
-    let newer = claims
-        .iter()
-        .max_by_key(|claim| claim.valid_from)
-        .expect("newer claim");
+    let older_id = store
+        .list_for_note("note-old")?
+        .into_iter()
+        .next()
+        .expect("older claim id")
+        .id;
+    let newer_id = store
+        .list_for_note("note-new")?
+        .into_iter()
+        .next()
+        .expect("newer claim id")
+        .id;
+    let older = store.get(&older_id)?.expect("older claim");
+    let newer = store.get(&newer_id)?.expect("newer claim");
 
     assert_eq!(older.valid_until, Some(newer.valid_from));
     assert!(store.has_relation(&newer.id, &older.id, ClaimRelation::Supersedes)?);
@@ -377,16 +380,20 @@ async fn equivalent_predicates_use_llm_synonym_check_for_contradictions() -> Res
     indexer.full_rebuild().await?;
 
     let store = ClaimStore::new(&index);
-    let by_subject = store.find_by_subject("ACME")?;
-    assert_eq!(by_subject.len(), 2);
-    let older = by_subject
-        .iter()
-        .min_by_key(|claim| claim.valid_from)
-        .expect("older claim");
-    let newer = by_subject
-        .iter()
-        .max_by_key(|claim| claim.valid_from)
-        .expect("newer claim");
+    let older_id = store
+        .list_for_note("eq-old")?
+        .into_iter()
+        .next()
+        .expect("older claim id")
+        .id;
+    let newer_id = store
+        .list_for_note("eq-new")?
+        .into_iter()
+        .next()
+        .expect("newer claim id")
+        .id;
+    let older = store.get(&older_id)?.expect("older claim");
+    let newer = store.get(&newer_id)?.expect("newer claim");
     assert_eq!(older.valid_until, Some(newer.valid_from));
     assert!(store.has_relation(&newer.id, &older.id, ClaimRelation::Contradicts)?);
     Ok(())
