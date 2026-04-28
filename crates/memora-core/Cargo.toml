@@ -19,6 +19,9 @@ walkdir.workspace = true
 notify.workspace = true
 regex.workspace = true
 blake3.workspace = true
+rusqlite.workspace = true
+r2d2.workspace = true
+r2d2_sqlite.workspace = true
 serde_yaml = "0.9"
 
 [dev-dependencies]
