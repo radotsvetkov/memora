@@ -13,7 +13,10 @@ pub mod vault;
 
 pub use answer::AnsweringPipeline;
 pub use cite::{parse_claim_markers, CitationStatus, CitationValidator, CitedAnswer};
-pub use claims::{Claim, ClaimExtractor, ClaimRelation, ClaimStore};
+pub use claims::{
+    Claim, ClaimExtractor, ClaimRelation, ClaimStore, ContradictionDetector, Provenance,
+    StalenessTracker,
+};
 pub use embed::{normalize_text, Embedder, OpenAiEmbedder};
 pub use index::{Index, IndexError, NoteRow, RebuildStats, VectorIndex};
 pub use learn::QValueLearner;

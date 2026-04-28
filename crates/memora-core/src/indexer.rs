@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 
-use crate::claims::{ClaimExtractor, ClaimStore};
+use crate::claims::{
+    ClaimExtractor, ClaimStore, ContradictionDetector, Provenance, StalenessTracker,
+};
 use crate::embed::{normalize_text, Embedder};
 use crate::index::{Index, RebuildStats, VectorIndex};
 use crate::note;
@@ -112,7 +114,17 @@ impl<'a> Indexer<'a> {
     }
 
     async fn upsert_note(&self, parsed: &crate::note::Note) -> Result<()> {
+        let mut old_claim_ids = Vec::new();
+        if let (Some(_extractor), Some(claim_store)) = (&self.claim_extractor, &self.claim_store) {
+            let should_extract =
+                self.extract_reference_notes || parsed.fm.source != NoteSource::Reference;
+            if should_extract {
+                old_claim_ids = claim_store.claim_ids_for_note(&parsed.fm.id)?;
+            }
+        }
+
         self.index.upsert_note(parsed, &parsed.body)?;
+
         if let (Some(extractor), Some(claim_store)) = (&self.claim_extractor, &self.claim_store) {
             let should_extract =
                 self.extract_reference_notes || parsed.fm.source != NoteSource::Reference;
@@ -125,6 +137,25 @@ impl<'a> Indexer<'a> {
                     }
                     Ok(())
                 })?;
+
+                let provenance = Provenance::new(self.index);
+                let stale_tracker = StalenessTracker::new(self.index, &provenance);
+                stale_tracker.mark_source_edited_claims(&old_claim_ids)?;
+                let contradiction_detector = ContradictionDetector {
+                    store: claim_store,
+                    stale: &stale_tracker,
+                    llm: extractor.llm,
+                };
+                for claim in &claims {
+                    let superseded = contradiction_detector.check_new_claim(claim).await?;
+                    if !superseded.is_empty() {
+                        tracing::info!(
+                            claim_id = %claim.id,
+                            count = superseded.len(),
+                            "supersession recorded"
+                        );
+                    }
+                }
             }
         }
         let text = make_embedding_text(&parsed.fm.summary, &parsed.body);

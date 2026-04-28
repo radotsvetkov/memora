@@ -107,6 +107,17 @@ impl<'a> ClaimStore<'a> {
         Ok(claims)
     }
 
+    pub fn claim_ids_for_note(&self, note_id: &str) -> Result<Vec<String>, IndexError> {
+        let conn = self.db.pool.get()?;
+        let mut stmt = conn.prepare("SELECT id FROM claims WHERE note_id = ? ORDER BY id ASC")?;
+        let rows = stmt.query_map(params![note_id], |row| row.get::<_, String>(0))?;
+        let mut ids = Vec::new();
+        for row in rows {
+            ids.push(row?);
+        }
+        Ok(ids)
+    }
+
     pub fn search_fts(&self, query: &str, limit: usize) -> Result<Vec<(String, f32)>, IndexError> {
         let limit = i64::try_from(limit)
             .map_err(|_| IndexError::Schema("limit does not fit in i64".to_string()))?;
@@ -151,6 +162,23 @@ impl<'a> ClaimStore<'a> {
         Ok(out)
     }
 
+    pub fn find_by_subject(&self, subject: &str) -> Result<Vec<Claim>, IndexError> {
+        let conn = self.db.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, subject, predicate, object, note_id, span_start, span_end, span_fingerprint,
+                    valid_from, valid_until, confidence, privacy, extracted_by, extracted_at
+             FROM claims
+             WHERE subject = ?
+             ORDER BY valid_from DESC",
+        )?;
+        let rows = stmt.query_map(params![subject], map_claim_row)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     pub fn add_relation(
         &self,
         src: &str,
@@ -171,6 +199,52 @@ impl<'a> ClaimStore<'a> {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn has_relation(
+        &self,
+        src: &str,
+        dst: &str,
+        relation: ClaimRelation,
+    ) -> Result<bool, IndexError> {
+        let conn = self.db.pool.get()?;
+        let exists = conn.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM claim_relations
+                WHERE src_id = ? AND dst_id = ? AND relation = ?
+            )",
+            params![src, dst, relation.to_string()],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(exists == 1)
+    }
+
+    pub fn contradictions_unack(&self) -> Result<Vec<(Claim, Claim)>, IndexError> {
+        let conn = self.db.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT
+                a.id, a.subject, a.predicate, a.object, a.note_id, a.span_start, a.span_end, a.span_fingerprint,
+                a.valid_from, a.valid_until, a.confidence, a.privacy, a.extracted_by, a.extracted_at,
+                b.id, b.subject, b.predicate, b.object, b.note_id, b.span_start, b.span_end, b.span_fingerprint,
+                b.valid_from, b.valid_until, b.confidence, b.privacy, b.extracted_by, b.extracted_at
+             FROM claim_relations r
+             JOIN claims a ON a.id = r.src_id
+             JOIN claims b ON b.id = r.dst_id
+             LEFT JOIN acknowledged_contradictions ack
+               ON ack.a_id = r.src_id AND ack.b_id = r.dst_id
+             WHERE r.relation = 'contradicts'
+               AND ack.a_id IS NULL",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let left = map_claim_row_from_offset(row, 0)?;
+            let right = map_claim_row_from_offset(row, 14)?;
+            Ok((left, right))
+        })?;
+        let mut pairs = Vec::new();
+        for row in rows {
+            pairs.push(row?);
+        }
+        Ok(pairs)
     }
 
     pub fn current_only(&self, ids: &[String]) -> Result<Vec<Claim>, IndexError> {
@@ -204,16 +278,23 @@ impl<'a> ClaimStore<'a> {
 }
 
 fn map_claim_row(row: &rusqlite::Row<'_>) -> Result<Claim, rusqlite::Error> {
-    let span_start_raw: i64 = row.get(5)?;
-    let span_end_raw: i64 = row.get(6)?;
-    let valid_from: String = row.get(8)?;
-    let valid_until: Option<String> = row.get(9)?;
-    let privacy: String = row.get(11)?;
-    let extracted_at: String = row.get(13)?;
+    map_claim_row_from_offset(row, 0)
+}
+
+fn map_claim_row_from_offset(
+    row: &rusqlite::Row<'_>,
+    offset: usize,
+) -> Result<Claim, rusqlite::Error> {
+    let span_start_raw: i64 = row.get(offset + 5)?;
+    let span_end_raw: i64 = row.get(offset + 6)?;
+    let valid_from: String = row.get(offset + 8)?;
+    let valid_until: Option<String> = row.get(offset + 9)?;
+    let privacy: String = row.get(offset + 11)?;
+    let extracted_at: String = row.get(offset + 13)?;
 
     let span_start = usize::try_from(span_start_raw).map_err(|_| {
         rusqlite::Error::FromSqlConversionFailure(
-            5,
+            offset + 5,
             rusqlite::types::Type::Integer,
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -223,7 +304,7 @@ fn map_claim_row(row: &rusqlite::Row<'_>) -> Result<Claim, rusqlite::Error> {
     })?;
     let span_end = usize::try_from(span_end_raw).map_err(|_| {
         rusqlite::Error::FromSqlConversionFailure(
-            6,
+            offset + 6,
             rusqlite::types::Type::Integer,
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -234,7 +315,11 @@ fn map_claim_row(row: &rusqlite::Row<'_>) -> Result<Claim, rusqlite::Error> {
 
     let valid_from = chrono::DateTime::parse_from_rfc3339(&valid_from)
         .map_err(|err| {
-            rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(err))
+            rusqlite::Error::FromSqlConversionFailure(
+                offset + 8,
+                rusqlite::types::Type::Text,
+                Box::new(err),
+            )
         })?
         .with_timezone(&Utc);
     let valid_until = match valid_until {
@@ -242,7 +327,7 @@ fn map_claim_row(row: &rusqlite::Row<'_>) -> Result<Claim, rusqlite::Error> {
             chrono::DateTime::parse_from_rfc3339(&value)
                 .map_err(|err| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        9,
+                        offset + 9,
                         rusqlite::types::Type::Text,
                         Box::new(err),
                     )
@@ -252,12 +337,16 @@ fn map_claim_row(row: &rusqlite::Row<'_>) -> Result<Claim, rusqlite::Error> {
         None => None,
     };
     let privacy = Privacy::from_str(&privacy).map_err(|err| {
-        rusqlite::Error::FromSqlConversionFailure(11, rusqlite::types::Type::Text, Box::new(err))
+        rusqlite::Error::FromSqlConversionFailure(
+            offset + 11,
+            rusqlite::types::Type::Text,
+            Box::new(err),
+        )
     })?;
     let extracted_at = chrono::DateTime::parse_from_rfc3339(&extracted_at)
         .map_err(|err| {
             rusqlite::Error::FromSqlConversionFailure(
-                13,
+                offset + 13,
                 rusqlite::types::Type::Text,
                 Box::new(err),
             )
@@ -265,19 +354,19 @@ fn map_claim_row(row: &rusqlite::Row<'_>) -> Result<Claim, rusqlite::Error> {
         .with_timezone(&Utc);
 
     Ok(Claim {
-        id: row.get(0)?,
-        subject: row.get(1)?,
-        predicate: row.get(2)?,
-        object: row.get(3)?,
-        note_id: row.get(4)?,
+        id: row.get(offset)?,
+        subject: row.get(offset + 1)?,
+        predicate: row.get(offset + 2)?,
+        object: row.get(offset + 3)?,
+        note_id: row.get(offset + 4)?,
         span_start,
         span_end,
-        span_fingerprint: row.get(7)?,
+        span_fingerprint: row.get(offset + 7)?,
         valid_from,
         valid_until,
-        confidence: row.get(10)?,
+        confidence: row.get(offset + 10)?,
         privacy,
-        extracted_by: row.get(12)?,
+        extracted_by: row.get(offset + 12)?,
         extracted_at,
     })
 }
