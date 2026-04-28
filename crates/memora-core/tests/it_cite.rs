@@ -10,8 +10,10 @@ use memora_core::answer::AnsweringPipeline;
 use memora_core::cite::{CitationStatus, CitationValidator};
 use memora_core::claims::{Claim, ClaimStore};
 use memora_core::note::{Frontmatter, Note, NoteSource, Privacy};
-use memora_core::{Embedder, HybridRetriever, Index, VectorIndex};
-use memora_llm::{CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError};
+use memora_core::{Embedder, HybridRetriever, Index, PrivacyConfig, PrivacyFilter, VectorIndex};
+use memora_llm::{
+    CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError, LlmProvider,
+};
 use tempfile::tempdir;
 
 fn write_note_file(path: &Path, id: &str, summary: &str, body: &str) -> Result<()> {
@@ -307,6 +309,8 @@ async fn answering_pipeline_retries_and_keeps_only_verified_markers() -> Result<
         claim_store: &store,
         validator: &validator,
         llm: &llm,
+        privacy_filter: PrivacyFilter::new_for(LlmProvider::Ollama),
+        privacy_config: PrivacyConfig::default(),
     };
 
     let cited = pipeline.answer("Rado", 5).await?;
