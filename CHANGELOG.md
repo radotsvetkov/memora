@@ -20,3 +20,8 @@
 
 ### Fixed
 - Normalize free-form natural-language queries before SQLite FTS5 `MATCH` so prompts like `What did I decide about the Q1 roadmap?` do not fail with a syntax error.
+
+## [0.1.7] - 2026-04-29
+
+### Fixed
+- Wire `memora index` to run claim extraction and persist claims during full rebuild so `memora query` can return citation-grounded answers from indexed notes.
