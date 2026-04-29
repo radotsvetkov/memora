@@ -13,6 +13,9 @@ path-guid = "9C3FAC2C-DB8F-4668-8457-2BFA5A92B237"
 license = false
 eula = false
 
+[package.metadata.dist]
+dist = false
+
 [[bin]]
 name = "bench_locomo"
 path = "src/bin/bench_locomo.rs"

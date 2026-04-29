@@ -21,6 +21,28 @@ cargo build --release
 ./target/release/memora query "What changed?" --vault ./vault
 ```
 
+## Install
+
+### macOS (Apple Silicon and Intel) and Linux
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/radotsvetkov/memora/releases/latest/download/memora-installer.sh | sh
+```
+
+### Windows
+
+Download the appropriate binary from the [latest release](https://github.com/radotsvetkov/memora/releases/latest):
+
+- `memora-x86_64-pc-windows-msvc.zip`
+
+Extract and place `memora.exe` and `memora-mcp.exe` somewhere on your `PATH`.
+
+### From source (any platform with Rust 1.75+)
+
+```bash
+cargo install --git https://github.com/radotsvetkov/memora memora-cli memora-mcp
+```
+
 More: `docs/quickstart.md`.
 
 ## MCP integration (Claude Code)
