@@ -51,8 +51,14 @@ pub struct Index {
 }
 
 const EMBEDDED_MIGRATIONS: &[(&str, &str)] = &[
-    ("0001_init.sql", include_str!("../../migrations/0001_init.sql")),
-    ("0002_ack.sql", include_str!("../../migrations/0002_ack.sql")),
+    (
+        "0001_init.sql",
+        include_str!("../../migrations/0001_init.sql"),
+    ),
+    (
+        "0002_ack.sql",
+        include_str!("../../migrations/0002_ack.sql"),
+    ),
     (
         "0003_consolidation_runs.sql",
         include_str!("../../migrations/0003_consolidation_runs.sql"),
