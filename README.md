@@ -1,87 +1,162 @@
 # Memora
 
-Verifiable cognitive memory for personal Obsidian-compatible vaults.
+**Verifiable cognitive memory for personal vaults. Cite-or-it-didn't-happen.**
 
-Memora stores and retrieves **claims**, not just notes. Every claim maps to an exact source span and fingerprint, so citations are validated against your markdown before answers are trusted.
+Memora retrieves *claims*, not notes — atomic facts with source-span
+pointers, validity windows, and privacy bands. Every LLM citation is
+architecturally validated against your markdown. Hallucinations are
+caught structurally, not by trust.
 
-## Why Memora
+→ **[See the architecture in motion](https://radotsvetkov.github.io/memora)**
 
-- Claim-graph memory with temporal validity windows.
-- Citation verification against source spans (`span_fingerprint`).
-- Privacy-aware extraction with inline secret markers.
-- Challenger loop for stale claims, contradictions, and frontier gaps.
-- MCP server and CLI in a single Rust-native stack.
+---
+
+## The problem
+
+Personal AI memory tools — RAG over Obsidian, Karpathy's LLM Wiki
+pattern, second-brain wrappers — share one weakness: they retrieve
+notes and trust the LLM to quote them faithfully. When the LLM
+fabricates a meeting that didn't happen, puts words in someone's
+mouth, or cites a claim your notes don't contain, you have no
+architectural defense. You either catch the hallucination yourself,
+or you don't.
+
+For a personal knowledge base — your decisions, your medical notes,
+your meeting minutes — that's the wrong trust model.
+
+## How Memora differs
+
+The atomic unit of memory is a **claim**, not a note. A claim is an
+extracted statement of fact with:
+
+- subject, predicate, object
+- source note + byte-range span
+- blake3 fingerprint of the source text
+- valid_from / valid_until temporal window
+- privacy band (public / private / secret)
+- provenance edges to source claims when synthesized
+
+When the LLM answers, it cites claim ids. The validator re-reads
+the source span from your markdown, recomputes the fingerprint, and
+rejects citations that don't match. Hallucinated ids get stripped
+and the LLM is re-prompted with verified-only context. The citation
+contract is enforced by Rust types and span hashes — not by prompt
+obedience.
+
+## What you get
+
+| | |
+|---|---|
+| **Verified citations** | Every claim_id in an answer is re-validated against the source span before reaching you. Hallucinations stripped. |
+| **Provenance + staleness** | Synthesis claims point to sources. Edit a note, downstream syntheses are auto-marked stale. |
+| **Time-aware reasoning** | Claims have validity windows. "What was true in March" is queryable. Contradictions auto-supersede. |
+| **Per-claim privacy** | Inline `<!--privacy:secret-->...<!--/privacy-->` markers. Secrets redacted at the wire boundary on cloud LLMs, type-system enforced. |
+| **Active challenger** | Daily background worker surfaces stale claims, contradictions, cross-region patterns, and frontier gaps in your `world_map.md`. |
+| **Hybrid retrieval** | BM25 + embedding + RRF fusion + Hebbian co-activation learning + spreading activation via wikilinks. |
+| **Local-first** | Single Rust binary. SQLite + HNSW. Works fully offline with Ollama. |
+| **Obsidian-native** | Plain markdown vault with frontmatter. Open and edit in Obsidian alongside Memora. |
+| **MCP-native** | Drop into Claude Code, Cursor, or any MCP client over stdio. |
 
 ## Quickstart
 
 ```bash
-cargo build --release
-./target/release/memora init --vault ./vault
-./target/release/memora index --vault ./vault
-./target/release/memora query "What changed?" --vault ./vault
+# install
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/radotsvetkov/memora/releases/latest/download/memora-cli-installer.sh | sh
+
+# initialize a vault
+memora init --vault ~/brain
+
+# index it
+memora index --vault ~/brain
+
+# ask something
+memora query "What did I decide about the Q1 roadmap?" --vault ~/brain
 ```
 
-## Install
+Full guide: [docs/quickstart.md](docs/quickstart.md)
 
-### macOS (Apple Silicon and Intel) and Linux
+## Use it with Claude Code
 
-```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/radotsvetkov/memora/releases/latest/download/memora-installer.sh | sh
-```
-
-### Windows
-
-Download the appropriate binary from the [latest release](https://github.com/radotsvetkov/memora/releases/latest):
-
-- `memora-x86_64-pc-windows-msvc.zip`
-
-Extract and place `memora.exe` and `memora-mcp.exe` somewhere on your `PATH`.
-
-### From source (any platform with Rust 1.75+)
-
-```bash
-cargo install --git https://github.com/radotsvetkov/memora memora-cli memora-mcp
-```
-
-More: `docs/quickstart.md`.
-
-## MCP integration (Claude Code)
-
-Example MCP server config:
+Add this to your Claude Code MCP config:
 
 ```json
 {
   "mcpServers": {
     "memora": {
-      "command": "/absolute/path/to/target/release/memora-mcp",
+      "command": "/usr/local/bin/memora-mcp",
       "env": {
-        "MEMORA_VAULT": "/absolute/path/to/vault",
-        "MEMORA_INDEX_DB": "/absolute/path/to/vault/.memora/memora.db",
-        "MEMORA_VECTOR_INDEX": "/absolute/path/to/vault/.memora/vectors"
+        "MEMORA_VAULT": "/absolute/path/to/your/vault"
       }
     }
   }
 }
 ```
 
-## Comparison highlight
+Claude Code now has access to 14 Memora tools including `memora_query_cited`
+(retrieval with verified citations), `memora_capture` (capture a session
+note), `memora_stale_claims`, `memora_contradictions`, and the active
+challenger.
 
-Memora's wedge is structural citation verification:
+Full integration guide: [docs/obsidian-guide.md](docs/obsidian-guide.md)
 
-- Most note-centric systems trust prompt obedience for citation correctness.
-- Memora re-opens source notes and re-hashes source spans for every cited claim.
+## How it compares
 
-See full comparison: `docs/comparison.md`.
+Memora is not a faster RAG. It's a different architecture for what
+"memory" means in personal AI tooling.
 
-## Docs
+| | RAG over Obsidian | LLM Wiki (Karpathy pattern) | Memora |
+|---|---|---|---|
+| **Atomic unit** | note chunks | whole notes | atomic claims |
+| **Citation enforcement** | prompt-level (trust the LLM) | prompt-level | architectural (span hash + retry) |
+| **Temporal reasoning** | latest-edited-wins | none | per-claim validity windows |
+| **Contradiction handling** | silent | manual | auto-supersession, surfaced |
+| **Privacy** | folder/note-level (manual) | none | per-claim, type-enforced redaction |
+| **Synthesis staleness** | not tracked | not tracked | provenance DAG, auto-flagged |
 
-- `docs/architecture.md`
-- `docs/vault-conventions.md`
-- `docs/mcp-tools.md`
-- `docs/citation-protocol.md`
-- `docs/comparison.md`
-- `docs/quickstart.md`
+Detailed comparison: [docs/comparison.md](docs/comparison.md)
+
+## Architecture in one paragraph
+
+A vault watcher parses markdown frontmatter and detects changes. Each
+note flows through an LLM-driven extractor that produces atomic claims
+with source-span byte ranges, blake3 fingerprints, and inherited
+privacy bands. Claims are stored in SQLite with FTS5 for keyword
+retrieval, embeddings in HNSW for semantic retrieval, and a Hebbian
+edge graph for co-activation learning. A contradiction detector
+auto-supersedes claims that conflict with newer ones. A daily
+challenger surfaces stale dependencies, contradictions, and frontier
+gaps. Queries flow through cascade retrieval: hybrid BM25+vector
+fusion → spreading activation → per-claim privacy filter (typed at
+compile time) → LLM answer formatting → citation validator → retry
+with verified-only context if hallucinations are detected. Everything
+exposed over MCP stdio.
+
+Full architecture: [docs/architecture.md](docs/architecture.md) —
+or [see it animated](https://radotsvetkov.github.io/memora).
+
+## Status
+
+v0.1.3 — public release. The architecture is complete, the test suite
+covers all five differentiators including end-to-end citation retry.
+Comparative benchmarks against other systems are not yet published.
+Real-world vault testing is in progress; vault sizes up to a few
+thousand notes are the target. Larger scales are unmeasured.
+
+Issues, edge cases, and design discussions welcome at
+[github.com/radotsvetkov/memora/issues](https://github.com/radotsvetkov/memora/issues).
+
+## Documentation
+
+- [Quickstart](docs/quickstart.md) — install and first query in 10 minutes
+- [Architecture](docs/architecture.md) — the deep dive
+- [Animated architecture](https://radotsvetkov.github.io/memora) — visualization
+- [Vault conventions](docs/vault-conventions.md) — frontmatter and folder layout
+- [Obsidian + Claude Code guide](docs/obsidian-guide.md) — daily-driver setup
+- [MCP tools reference](docs/mcp-tools.md) — every tool with examples
+- [Citation protocol](docs/citation-protocol.md) — how validation works
+- [Comparison](docs/comparison.md) — vs RAG, vs LLM Wiki, vs other systems
 
 ## License
 
-Apache-2.0
+Apache-2.0 © Rado

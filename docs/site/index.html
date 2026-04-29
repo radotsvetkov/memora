@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memora - Verifiable Cognitive Memory</title>
+  <style>
+    :root {
+      --bg: #fafaf8;
+      --text: #1a1a1a;
+      --muted: #5a6270;
+      --blue: #3b6ea8;
+      --green: #3a8c5e;
+      --red: #a84444;
+      --yellow: #c7a53d;
+      --line: #d9dee6;
+      --card: #ffffff;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .container {
+      width: min(1120px, 92vw);
+      margin: 0 auto;
+    }
+
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 4rem 1rem;
+      background: radial-gradient(circle at 50% 20%, #f2f6fb 0%, #fafaf8 60%);
+    }
+
+    h1 {
+      font-size: clamp(2rem, 5vw, 4rem);
+      margin: 0;
+      letter-spacing: -0.02em;
+    }
+    .sub {
+      font-size: clamp(1.15rem, 2.4vw, 1.9rem);
+      color: var(--blue);
+      margin-top: 0.8rem;
+      font-weight: 650;
+    }
+    .tag {
+      margin-top: 1rem;
+      font-size: 1.05rem;
+      color: var(--muted);
+    }
+    .tech {
+      margin: 0.8rem auto 0;
+      max-width: 860px;
+      color: #374151;
+      font-size: 0.98rem;
+    }
+    .cta {
+      margin-top: 2rem;
+      display: inline-block;
+      background: var(--blue);
+      color: #fff;
+      padding: 0.8rem 1.25rem;
+      border-radius: 999px;
+      text-decoration: none;
+      font-weight: 600;
+      transition: transform 0.2s ease, opacity 0.2s ease;
+    }
+    .cta:hover { transform: translateY(-2px); opacity: 0.95; }
+
+    section { padding: 3rem 0; }
+    .viz-wrap { position: relative; }
+    .viz-title { font-size: 1.4rem; margin: 0 0 1rem; }
+
+    .viz-frame {
+      background: #fff;
+      border: 1px solid #e7ebf0;
+      border-radius: 16px;
+      padding: 0.8rem;
+      overflow: hidden;
+      box-shadow: 0 8px 24px rgba(20, 30, 50, 0.06);
+    }
+
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      background: linear-gradient(180deg, #fcfdff 0%, #f7f9fc 100%);
+      border-radius: 10px;
+    }
+
+    .note {
+      fill: #8c98ab;
+      opacity: 0.75;
+      animation: notePulse 4s ease-in-out infinite;
+      transform-origin: center;
+    }
+    .claim {
+      fill: #4f6f93;
+      opacity: 0;
+      animation: claimIn 0.7s ease forwards;
+    }
+    .verified {
+      fill: var(--green);
+      animation: claimIn 0.7s ease forwards, verifiedHalo 2s ease-in-out infinite;
+    }
+    .stale {
+      stroke: var(--yellow);
+      stroke-width: 3;
+      animation: claimIn 0.7s ease forwards, stalePulse 2s ease-in-out infinite;
+    }
+    .rejected {
+      fill: var(--red);
+      animation: claimIn 0.7s ease forwards, rejectShake 5s ease-in-out infinite;
+    }
+    .reject-cross {
+      stroke: #7c2f2f;
+      stroke-width: 2.5;
+      pointer-events: none;
+    }
+
+    .connection {
+      fill: none;
+      stroke: #b4c0cf;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-dasharray: 1000;
+      stroke-dashoffset: 1000;
+      animation: drawLine 2.2s ease forwards;
+    }
+
+    .node {
+      cursor: pointer;
+      transition: filter 0.2s ease;
+    }
+    .node:hover { filter: brightness(1.1); }
+
+    #tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: #111827;
+      color: #fff;
+      font-size: 0.84rem;
+      padding: 0.45rem 0.6rem;
+      border-radius: 8px;
+      opacity: 0;
+      transform: translate(-50%, -110%);
+      transition: opacity 0.15s ease;
+      white-space: nowrap;
+      z-index: 20;
+    }
+
+    .badges {
+      margin-top: 1rem;
+      display: flex;
+      justify-content: center;
+    }
+    .badge {
+      min-width: 280px;
+      text-align: center;
+      border: 1px solid #d7deea;
+      background: #f4f8fd;
+      color: #2e4f73;
+      padding: 0.55rem 0.9rem;
+      border-radius: 999px;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid #e4e8ef;
+      border-radius: 14px;
+      padding: 1rem;
+    }
+    .card h3 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+    .card p { margin: 0; color: #3b4250; }
+
+    .strip {
+      margin-top: 2rem;
+      background: #fff;
+      border: 1px solid #e6eaf2;
+      border-radius: 14px;
+      padding: 1.2rem;
+    }
+    .strip .lead {
+      font-size: 1.05rem;
+      margin: 0 0 0.9rem;
+      color: #2a3140;
+    }
+    .cols {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.8rem;
+    }
+    .col {
+      border: 1px solid #dde4ef;
+      border-radius: 10px;
+      padding: 0.85rem;
+      background: #fdfefe;
+    }
+    .col h4 { margin: 0 0 0.4rem; font-size: 1rem; }
+    .col p { margin: 0; color: #475063; font-size: 0.93rem; }
+    .col.memora {
+      border-color: #b9d6c6;
+      background: #f3fbf6;
+      box-shadow: inset 0 0 0 1px #d7ebdd;
+    }
+
+    footer {
+      margin-top: 3rem;
+      padding: 2rem 0 2.5rem;
+      border-top: 1px solid #e5e9ef;
+      color: #4b5563;
+    }
+    footer a {
+      color: var(--blue);
+      text-decoration: none;
+      margin-right: 1rem;
+    }
+    footer a:hover { text-decoration: underline; }
+
+    @keyframes notePulse {
+      0%, 100% { transform: scale(1); opacity: 0.7; }
+      50% { transform: scale(1.08); opacity: 1; }
+    }
+    @keyframes claimIn {
+      from { opacity: 0; transform: translateY(8px) scale(0.9); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes drawLine {
+      to { stroke-dashoffset: 0; }
+    }
+    @keyframes verifiedHalo {
+      0%, 100% { filter: drop-shadow(0 0 0 rgba(58, 140, 94, 0.15)); }
+      50% { filter: drop-shadow(0 0 8px rgba(58, 140, 94, 0.6)); }
+    }
+    @keyframes stalePulse {
+      0%, 100% { stroke-opacity: 0.35; }
+      50% { stroke-opacity: 1; }
+    }
+    @keyframes rejectShake {
+      0%, 88%, 100% { transform: translateX(0); }
+      90% { transform: translateX(-2px); }
+      92% { transform: translateX(2px); }
+      94% { transform: translateX(-2px); }
+      96% { transform: translateX(2px); }
+    }
+
+    @media (max-width: 768px) {
+      .cards, .cols { grid-template-columns: 1fr; }
+      .badge { min-width: auto; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="container">
+      <h1>Verifiable cognitive memory for personal vaults.</h1>
+      <div class="sub">Cite-or-it-didn't-happen.</div>
+      <div class="tag">Memora retrieves claims, not notes.</div>
+      <p class="tech">Memora retrieves claims, not notes — atomic facts with source-span pointers, validity windows, and privacy bands. Every LLM citation is architecturally validated against your markdown.</p>
+      <a class="cta" href="https://github.com/radotsvetkov/memora">Get started →</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <section>
+      <h2 class="viz-title">Architecture in motion</h2>
+      <div class="viz-wrap">
+        <div class="viz-frame">
+          <svg viewBox="0 0 1200 700" role="img" aria-label="Memora architecture animation">
+            <g>
+              <path class="connection" style="animation-delay:.1s" d="M220,145 C300,130 350,170 430,170" />
+              <path class="connection" style="animation-delay:.2s" d="M430,170 C525,170 550,220 630,220" />
+              <path class="connection" style="animation-delay:.3s" d="M630,220 C710,220 770,180 850,170" />
+              <path class="connection" style="animation-delay:.4s" d="M320,335 C420,300 520,320 620,350" />
+              <path class="connection" style="animation-delay:.5s" d="M620,350 C700,370 780,370 860,350" />
+              <path class="connection" style="animation-delay:.6s" d="M250,550 C380,520 540,520 680,560" />
+              <path class="connection" style="animation-delay:.7s" d="M680,560 C790,590 880,550 980,520" />
+            </g>
+
+            <g>
+              <circle class="note node" cx="170" cy="130" r="17" style="animation-delay:0s" data-tip="Note: project-roadmap.md"></circle>
+              <circle class="note node" cx="320" cy="120" r="15" style="animation-delay:.4s" data-tip="Note: weekly-review.md"></circle>
+              <circle class="note node" cx="510" cy="175" r="16" style="animation-delay:.8s" data-tip="Note: architecture-notes.md"></circle>
+              <circle class="note node" cx="700" cy="210" r="16" style="animation-delay:1.2s" data-tip="Note: deployment-plan.md"></circle>
+              <circle class="note node" cx="900" cy="160" r="15" style="animation-delay:1.6s" data-tip="Note: incident-retro.md"></circle>
+              <circle class="note node" cx="250" cy="330" r="16" style="animation-delay:2s" data-tip="Note: customer-call.md"></circle>
+              <circle class="note node" cx="430" cy="305" r="15" style="animation-delay:2.4s" data-tip="Note: product-decisions.md"></circle>
+              <circle class="note node" cx="620" cy="355" r="16" style="animation-delay:2.8s" data-tip="Note: reliability-plan.md"></circle>
+              <circle class="note node" cx="830" cy="340" r="17" style="animation-delay:3.2s" data-tip="Note: roadmap-sync.md"></circle>
+              <circle class="note node" cx="160" cy="560" r="15" style="animation-delay:3.6s" data-tip="Note: health-log.md"></circle>
+              <circle class="note node" cx="430" cy="530" r="16" style="animation-delay:4s" data-tip="Note: research-draft.md"></circle>
+              <circle class="note node" cx="760" cy="565" r="16" style="animation-delay:4.4s" data-tip="Note: ops-checklist.md"></circle>
+            </g>
+
+            <g>
+              <rect class="claim node" x="204" y="145" width="10" height="10" style="animation-delay:.1s" data-tip="Claim: Q1 priority is reliability"></rect>
+              <polygon class="claim node" points="190,112 198,126 182,126" style="animation-delay:.2s" data-tip="Claim: latency budget tightened"></polygon>
+              <rect class="claim node" x="334" y="141" width="10" height="10" style="animation-delay:.3s" data-tip="Claim: weekly review approved"></rect>
+              <polygon class="claim node stale" points="500,150 512,171 488,171" style="animation-delay:.4s" data-tip="Claim: old deployment route [stale]"></polygon>
+              <rect class="claim node verified" x="535" y="190" width="12" height="12" style="animation-delay:.5s" data-tip="Claim: reliability over features [verified]"></rect>
+              <rect class="claim node" x="730" y="225" width="10" height="10" style="animation-delay:.6s" data-tip="Claim: rollout has two stages"></rect>
+              <polygon class="claim node verified" points="878,184 888,202 868,202" style="animation-delay:.7s" data-tip="Claim: postmortem complete [verified]"></polygon>
+              <rect class="claim node rejected" x="265" y="352" width="11" height="11" style="animation-delay:.8s" data-tip="Claim: fabricated meeting quote [rejected]"></rect>
+              <line class="reject-cross" x1="263" y1="350" x2="279" y2="366"></line>
+              <line class="reject-cross" x1="279" y1="350" x2="263" y2="366"></line>
+              <polygon class="claim node" points="455,330 465,347 445,347" style="animation-delay:.9s" data-tip="Claim: timeline moved to May"></polygon>
+              <rect class="claim node stale" x="640" y="372" width="11" height="11" style="animation-delay:1s" data-tip="Claim: outdated service owner [stale]"></rect>
+              <polygon class="claim node verified" points="850,365 861,384 839,384" style="animation-delay:1.1s" data-tip="Claim: citation fingerprint matched [verified]"></polygon>
+              <rect class="claim node" x="185" y="578" width="10" height="10" style="animation-delay:1.2s" data-tip="Claim: baseline check logged"></rect>
+              <polygon class="claim node" points="460,553 470,572 450,572" style="animation-delay:1.3s" data-tip="Claim: open frontier identified"></polygon>
+              <rect class="claim node" x="787" y="586" width="10" height="10" style="animation-delay:1.4s" data-tip="Claim: weekly runbook updated"></rect>
+            </g>
+          </svg>
+        </div>
+        <div id="tooltip"></div>
+      </div>
+
+      <div class="badges">
+        <div class="badge" id="cycleBadge">Span fingerprint matched</div>
+      </div>
+
+      <div class="cards">
+        <article class="card">
+          <h3>Notes become claims.</h3>
+          <p>Memora reads markdown notes, extracts atomic claims with source byte spans, and preserves provenance to the exact location where each statement originated.</p>
+        </article>
+        <article class="card">
+          <h3>Claims get fingerprinted.</h3>
+          <p>Every extracted source span gets a cryptographic fingerprint. At response time, cited claims are re-read from markdown and re-hashed before they are trusted.</p>
+        </article>
+        <article class="card">
+          <h3>Citations are enforced.</h3>
+          <p>If the model cites a missing or mismatched claim, Memora rejects it and retries using verified-only context so unsupported citations do not pass silently.</p>
+        </article>
+      </div>
+
+      <div class="strip">
+        <p class="lead">Most personal AI memory tools trust the LLM. Memora doesn't have to.</p>
+        <div class="cols">
+          <div class="col">
+            <h4>RAG</h4>
+            <p>Note chunks, prompt-level citation.</p>
+          </div>
+          <div class="col">
+            <h4>LLM Wiki</h4>
+            <p>Whole notes, prompt-level retrieval.</p>
+          </div>
+          <div class="col memora">
+            <h4>Memora</h4>
+            <p>Atomic claims, architectural validation.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <a href="https://github.com/radotsvetkov/memora#readme">README</a>
+      <a href="https://github.com/radotsvetkov/memora/tree/main/docs">Docs</a>
+      <a href="https://github.com/radotsvetkov/memora">GitHub repo</a>
+      <div style="margin-top:0.8rem;">Made by Rado. Apache-2.0.</div>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      const tooltip = document.getElementById("tooltip");
+      const wrap = document.querySelector(".viz-wrap");
+      const nodes = document.querySelectorAll(".node");
+
+      nodes.forEach((el) => {
+        el.addEventListener("mousemove", (e) => {
+          const text = el.getAttribute("data-tip") || "";
+          tooltip.textContent = text;
+          const rect = wrap.getBoundingClientRect();
+          tooltip.style.left = (e.clientX - rect.left) + "px";
+          tooltip.style.top = (e.clientY - rect.top) + "px";
+          tooltip.style.opacity = "1";
+        });
+        el.addEventListener("mouseleave", () => {
+          tooltip.style.opacity = "0";
+        });
+      });
+
+      const states = [
+        "Span fingerprint matched",
+        "Citation verified",
+        "Privacy filter applied"
+      ];
+      const badge = document.getElementById("cycleBadge");
+      let i = 0;
+      setInterval(() => {
+        i = (i + 1) % states.length;
+        badge.style.opacity = "0";
+        setTimeout(() => {
+          badge.textContent = states[i];
+          badge.style.opacity = "1";
+        }, 180);
+      }, 3000);
+    })();
+  </script>
+</body>
+</html>
