@@ -13,9 +13,16 @@ path-guid = "6037C433-77D1-4F71-A98D-95AC2249AEC6"
 license = false
 eula = false
 
+[package.metadata.dist]
+dist = true
+
 [[bin]]
 name = "memora"
 path = "src/main.rs"
+
+[[bin]]
+name = "memora-mcp"
+path = "src/bin/memora-mcp.rs"
 
 [dependencies]
 anyhow.workspace = true

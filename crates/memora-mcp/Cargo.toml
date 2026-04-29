@@ -13,10 +13,6 @@ path-guid = "CC01C538-6ED1-4F4D-9341-C3BFF10420DC"
 license = false
 eula = false
 
-[[bin]]
-name = "memora-mcp"
-path = "src/main.rs"
-
 [dependencies]
 anyhow.workspace = true
 tokio.workspace = true
