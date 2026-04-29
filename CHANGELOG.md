@@ -25,3 +25,9 @@
 
 ### Fixed
 - Wire `memora index` to run claim extraction and persist claims during full rebuild so `memora query` can return citation-grounded answers from indexed notes.
+
+## [0.1.8] - 2026-04-29
+
+### Fixed
+- Add heuristic claim-extraction fallback when local models return malformed JSON or extraction calls fail, so indexing still produces claims.
+- Add extractive citation-backed answer fallback when the model returns uncited generic chat output despite available claims.

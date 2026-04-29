@@ -59,6 +59,20 @@ impl<'a> AnsweringPipeline<'a> {
             .map(|hit| (hit.id.clone(), hit.score))
             .collect::<HashMap<_, _>>();
         let ranked_claims = rank_claims_by_note_score(current_claims, &note_score, 12);
+        if ranked_claims.is_empty() {
+            return Ok(CitedAnswer {
+                raw_text: "No indexed claims matched this question yet. Try running `memora index --vault <path>` and ensure your notes include valid frontmatter."
+                    .to_string(),
+                clean_text: "No indexed claims matched this question yet. Try running `memora index --vault <path>` and ensure your notes include valid frontmatter."
+                    .to_string(),
+                checks: Vec::new(),
+                verified_count: 0,
+                unverified_count: 0,
+                mismatch_count: 0,
+                redacted_count: 0,
+                degraded: true,
+            });
+        }
         let (redacted, stats) = self.privacy_filter.filter(&ranked_claims);
         if self.privacy_config.warn_on_secret_query && stats.redacted > 0 {
             tracing::warn!(
@@ -84,7 +98,7 @@ impl<'a> AnsweringPipeline<'a> {
             .await?;
         let mut cited = self.validator.validate(&response.text).await?;
         cited.redacted_count = stats.redacted;
-        if cited.unverified_count + cited.mismatch_count == 0 {
+        if cited.verified_count > 0 && cited.unverified_count + cited.mismatch_count == 0 {
             return Ok(cited);
         }
 
@@ -117,6 +131,13 @@ impl<'a> AnsweringPipeline<'a> {
             .await?;
         let mut cited_retry = self.validator.validate(&retry.text).await?;
         cited_retry.redacted_count = stats.redacted;
+        if cited_retry.verified_count == 0 {
+            let fallback = build_extractive_answer(&redacted, 5);
+            let mut fallback_cited = self.validator.validate(&fallback).await?;
+            fallback_cited.redacted_count = stats.redacted;
+            fallback_cited.degraded = true;
+            return Ok(fallback_cited);
+        }
         if cited_retry.unverified_count + cited_retry.mismatch_count > 0 {
             cited_retry.degraded = true;
         }
@@ -146,6 +167,17 @@ fn format_claim_context(claims: &[RedactedClaim]) -> String {
         out.push_str(&format!(
             "- [claim:{}] {} {} {}\n",
             claim.id, claim.subject, claim.predicate, claim.object
+        ));
+    }
+    out
+}
+
+fn build_extractive_answer(claims: &[RedactedClaim], limit: usize) -> String {
+    let mut out = String::from("Based on indexed claims:\n");
+    for claim in claims.iter().take(limit) {
+        out.push_str(&format!(
+            "- {} {} {} [claim:{}]\n",
+            claim.subject, claim.predicate, claim.object, claim.id
         ));
     }
     out

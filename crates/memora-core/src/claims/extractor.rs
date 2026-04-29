@@ -64,8 +64,25 @@ impl<'a> ClaimExtractor<'a> {
             temperature: 0.1,
             json_mode: true,
         };
-        let response = self.llm.complete(req).await?;
-        let items = parse_llm_items(&response.text)?;
+        let items = match self.llm.complete(req).await {
+            Ok(response) => match parse_llm_items(&response.text) {
+                Ok(items) => items,
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "claim extractor returned malformed JSON; using heuristic extraction fallback"
+                    );
+                    heuristic_items(body)
+                }
+            },
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "claim extractor LLM call failed; using heuristic extraction fallback"
+                );
+                heuristic_items(body)
+            }
+        };
         let mut claims = Vec::new();
 
         for item in items {
@@ -222,6 +239,70 @@ fn parse_optional(value: Option<&Value>) -> Option<DateTime<Utc>> {
         .map(|dt| dt.with_timezone(&Utc))
 }
 
+fn heuristic_items(body: &str) -> Vec<Value> {
+    split_segments_with_spans(body)
+        .into_iter()
+        .take(8)
+        .map(|(span_start, span_end, text)| {
+            serde_json::json!({
+                "s": "note",
+                "p": "states",
+                "o": text,
+                "span_start": span_start as i64,
+                "span_end": span_end as i64,
+                "valid_from": Value::Null,
+                "valid_until": Value::Null,
+                "confidence": 0.5_f64,
+            })
+        })
+        .collect()
+}
+
+fn split_segments_with_spans(body: &str) -> Vec<(usize, usize, String)> {
+    let mut segments = Vec::new();
+    let mut start = 0usize;
+    for (idx, ch) in body.char_indices() {
+        if ch == '.' || ch == '!' || ch == '?' || ch == '\n' {
+            let end = idx + ch.len_utf8();
+            push_trimmed_segment(body, start, end, &mut segments);
+            start = end;
+        }
+    }
+    if start < body.len() {
+        push_trimmed_segment(body, start, body.len(), &mut segments);
+    }
+    segments
+}
+
+fn push_trimmed_segment(
+    body: &str,
+    start: usize,
+    end: usize,
+    out: &mut Vec<(usize, usize, String)>,
+) {
+    let Some(raw) = body.get(start..end) else {
+        return;
+    };
+    let trimmed_start_delta = raw.len() - raw.trim_start().len();
+    let trimmed_end_delta = raw.len() - raw.trim_end().len();
+    let span_start = start + trimmed_start_delta;
+    let span_end = end.saturating_sub(trimmed_end_delta);
+    if span_end <= span_start {
+        return;
+    }
+    let Some(trimmed) = body.get(span_start..span_end) else {
+        return;
+    };
+    let normalized = trimmed
+        .trim_matches(|ch: char| ch.is_whitespace() || ch == '.' || ch == '!' || ch == '?')
+        .trim();
+    let char_len = normalized.chars().count();
+    if !(8..=300).contains(&char_len) {
+        return;
+    }
+    out.push((span_start, span_end, normalized.to_string()));
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -352,8 +433,9 @@ mod tests {
         let extractor = make_extractor("{not json");
         let note = make_note("note-5", body, Privacy::Private);
 
-        let err = extractor.extract(&note, body).await.expect_err("must fail");
-        assert!(err.to_string().contains("malformed JSON"));
+        let claims = extractor.extract(&note, body).await.expect("must fallback");
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].predicate, "states");
     }
 
     #[test]
