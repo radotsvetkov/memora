@@ -65,6 +65,27 @@ const EMBEDDED_MIGRATIONS: &[(&str, &str)] = &[
     ),
 ];
 
+pub(crate) fn normalize_fts_query(query: &str) -> Option<String> {
+    let terms = query
+        .split_whitespace()
+        .filter_map(|token| {
+            let trimmed = token.trim_matches(|ch: char| {
+                !(ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '\'')
+            });
+            if trimmed.is_empty() {
+                return None;
+            }
+            let escaped = trimmed.replace('"', "\"\"");
+            Some(format!("\"{escaped}\""))
+        })
+        .collect::<Vec<_>>();
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" OR "))
+    }
+}
+
 impl Index {
     pub fn open(db_path: &Path) -> Result<Self, IndexError> {
         if db_path != Path::new(":memory:") {
@@ -158,6 +179,9 @@ impl Index {
     pub fn bm25_search(&self, query: &str, limit: usize) -> Result<Vec<(String, f32)>, IndexError> {
         let limit = i64::try_from(limit)
             .map_err(|_| IndexError::Schema("limit does not fit in i64".to_string()))?;
+        let Some(match_query) = normalize_fts_query(query) else {
+            return Ok(Vec::new());
+        };
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
             "SELECT id, bm25(notes_fts) AS score
@@ -166,7 +190,7 @@ impl Index {
              ORDER BY score
              LIMIT ?",
         )?;
-        let rows = stmt.query_map(params![query, limit], |row| {
+        let rows = stmt.query_map(params![match_query, limit], |row| {
             let id: String = row.get(0)?;
             let score: f64 = row.get(1)?;
             Ok((id, (-score) as f32))
@@ -480,5 +504,26 @@ mod tests {
     fn embedded_migrations_list_is_not_empty() {
         assert!(!EMBEDDED_MIGRATIONS.is_empty());
         assert_eq!(EMBEDDED_MIGRATIONS[0].0, "0001_init.sql");
+    }
+
+    #[test]
+    fn bm25_search_handles_natural_language_punctuation() {
+        let index = Index::open(Path::new(":memory:")).expect("open in-memory index");
+        let note = make_note(
+            "roadmap-q1",
+            "vault/roadmap-q1.md",
+            "Roadmap decisions",
+            "I decided to prioritize billing and retention in the Q1 roadmap.",
+            Vec::new(),
+        );
+        index
+            .upsert_note(&note, &note.body)
+            .expect("upsert roadmap note");
+
+        let results = index
+            .bm25_search("What did I decide about the Q1 roadmap?", 5)
+            .expect("run bm25 search with punctuation");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "roadmap-q1");
     }
 }

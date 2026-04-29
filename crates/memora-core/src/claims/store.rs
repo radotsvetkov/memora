@@ -4,6 +4,7 @@ use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 
 use crate::claims::{Claim, ClaimRelation};
+use crate::index::sqlite::normalize_fts_query;
 use crate::index::{Index, IndexError};
 use crate::note::Privacy;
 
@@ -121,6 +122,9 @@ impl<'a> ClaimStore<'a> {
     pub fn search_fts(&self, query: &str, limit: usize) -> Result<Vec<(String, f32)>, IndexError> {
         let limit = i64::try_from(limit)
             .map_err(|_| IndexError::Schema("limit does not fit in i64".to_string()))?;
+        let Some(match_query) = normalize_fts_query(query) else {
+            return Ok(Vec::new());
+        };
         let conn = self.db.pool.get()?;
         let mut stmt = conn.prepare(
             "SELECT id, bm25(claims_fts) AS score
@@ -129,7 +133,7 @@ impl<'a> ClaimStore<'a> {
              ORDER BY score
              LIMIT ?",
         )?;
-        let rows = stmt.query_map(params![query, limit], |row| {
+        let rows = stmt.query_map(params![match_query, limit], |row| {
             let id: String = row.get(0)?;
             let score: f64 = row.get(1)?;
             Ok((id, (-score) as f32))

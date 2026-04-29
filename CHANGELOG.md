@@ -15,3 +15,8 @@
 
 ### Fixed
 - Re-release the migration hotfix with rustfmt-clean source so the tag-triggered Release workflow passes end-to-end.
+
+## [0.1.6] - 2026-04-29
+
+### Fixed
+- Normalize free-form natural-language queries before SQLite FTS5 `MATCH` so prompts like `What did I decide about the Q1 roadmap?` do not fail with a syntax error.

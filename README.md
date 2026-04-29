@@ -138,7 +138,7 @@ or [see it on the landing page](https://radotsvetkov.github.io/memora).
 
 ## Status
 
-v0.1.5 — public release. The architecture is complete, the test suite
+v0.1.6 — public release. The architecture is complete, the test suite
 covers all five differentiators including end-to-end citation retry.
 Comparative benchmarks against other systems are not yet published.
 Real-world vault testing is in progress; vault sizes up to a few
