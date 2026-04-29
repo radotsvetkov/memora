@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use chrono::Utc;
 use r2d2::Pool;
@@ -49,6 +49,15 @@ pub struct RebuildStats {
 pub struct Index {
     pub(crate) pool: Pool<SqliteConnectionManager>,
 }
+
+const EMBEDDED_MIGRATIONS: &[(&str, &str)] = &[
+    ("0001_init.sql", include_str!("../../migrations/0001_init.sql")),
+    ("0002_ack.sql", include_str!("../../migrations/0002_ack.sql")),
+    (
+        "0003_consolidation_runs.sql",
+        include_str!("../../migrations/0003_consolidation_runs.sql"),
+    ),
+];
 
 impl Index {
     pub fn open(db_path: &Path) -> Result<Self, IndexError> {
@@ -325,9 +334,6 @@ impl Index {
             );",
         )?;
 
-        let mut migration_files = migration_files()?;
-        migration_files.sort();
-
         let applied = {
             let mut stmt = conn.prepare("SELECT name FROM _migrations")?;
             let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
@@ -338,22 +344,12 @@ impl Index {
             names
         };
 
-        for file in migration_files {
-            let Some(name) = file.file_name().and_then(|f| f.to_str()) else {
-                return Err(IndexError::Schema(format!(
-                    "invalid migration file name: {}",
-                    file.display()
-                )));
-            };
+        for &(name, sql) in EMBEDDED_MIGRATIONS {
             if applied.contains(name) {
                 continue;
             }
-
-            let sql = fs::read_to_string(&file).map_err(|err| {
-                IndexError::Schema(format!("read migration {}: {err}", file.display()))
-            })?;
             let tx = conn.transaction()?;
-            tx.execute_batch(&sql)?;
+            tx.execute_batch(sql)?;
             tx.execute(
                 "INSERT INTO _migrations (name, applied_at) VALUES (?, ?)",
                 params![name, Utc::now().to_rfc3339()],
@@ -363,32 +359,6 @@ impl Index {
 
         Ok(())
     }
-}
-
-fn migration_files() -> Result<Vec<PathBuf>, IndexError> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
-    let entries = fs::read_dir(&root).map_err(|err| {
-        IndexError::Schema(format!(
-            "read migration directory {}: {err}",
-            root.display()
-        ))
-    })?;
-    let mut files = Vec::new();
-    for entry in entries {
-        let entry =
-            entry.map_err(|err| IndexError::Schema(format!("read migration entry: {err}")))?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) == Some("sql") {
-            files.push(path);
-        }
-    }
-    if files.is_empty() {
-        return Err(IndexError::Schema(format!(
-            "no .sql migrations found in {}",
-            root.display()
-        )));
-    }
-    Ok(files)
 }
 
 fn truncated_blake3_hex(body: &str) -> String {
@@ -498,5 +468,11 @@ mod tests {
             .get_note("note-a")
             .expect("lookup deleted note")
             .is_none());
+    }
+
+    #[test]
+    fn embedded_migrations_list_is_not_empty() {
+        assert!(!EMBEDDED_MIGRATIONS.is_empty());
+        assert_eq!(EMBEDDED_MIGRATIONS[0].0, "0001_init.sql");
     }
 }
