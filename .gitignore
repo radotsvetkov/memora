@@ -18,3 +18,7 @@ target/
 **/*.rs.bk
 CHECKPOINT-*.md
 PRECHECK-FAIL.md
+
+# mdBook output
+docs/book/
+_site/

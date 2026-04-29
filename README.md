@@ -74,7 +74,8 @@ memora index --vault ~/brain
 memora query "What did I decide about the Q1 roadmap?" --vault ~/brain
 ```
 
-Full guide: [docs/quickstart.md](docs/quickstart.md)
+Full guide: [Quickstart](docs/src/quickstart.md) ·
+[online docs](https://radotsvetkov.github.io/memora/docs/quickstart.html)
 
 ## Use it with Claude Code
 
@@ -98,7 +99,7 @@ Claude Code now has access to 14 Memora tools including `memora_query_cited`
 note), `memora_stale_claims`, `memora_contradictions`, and the active
 challenger.
 
-Full integration guide: [docs/obsidian-guide.md](docs/obsidian-guide.md)
+Full integration guide: [Obsidian + Claude Code](docs/src/obsidian-guide.md)
 
 ## How it compares
 
@@ -114,7 +115,7 @@ Memora is not a faster RAG. It's a different architecture for what
 | **Privacy** | folder/note-level (manual) | none | per-claim, type-enforced redaction |
 | **Synthesis staleness** | not tracked | not tracked | provenance DAG, auto-flagged |
 
-Detailed comparison: [docs/comparison.md](docs/comparison.md)
+Detailed comparison: [Architectural comparison](docs/src/comparison.md)
 
 ## Architecture in one paragraph
 
@@ -132,8 +133,8 @@ compile time) → LLM answer formatting → citation validator → retry
 with verified-only context if hallucinations are detected. Everything
 exposed over MCP stdio.
 
-Full architecture: [docs/architecture.md](docs/architecture.md) —
-or [see it animated](https://radotsvetkov.github.io/memora).
+Full architecture: [Architecture deep dive](docs/src/architecture.md) —
+or [see it on the landing page](https://radotsvetkov.github.io/memora).
 
 ## Status
 
@@ -148,15 +149,19 @@ Issues, edge cases, and design discussions welcome at
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md) — install and first query in 10 minutes
-- [Architecture](docs/architecture.md) — the deep dive
-- [Animated architecture](https://radotsvetkov.github.io/memora) — visualization
-- [Vault conventions](docs/vault-conventions.md) — frontmatter and folder layout
-- [Obsidian + Claude Code guide](docs/obsidian-guide.md) — daily-driver setup
-- [MCP tools reference](docs/mcp-tools.md) — every tool with examples
-- [Citation protocol](docs/citation-protocol.md) — how validation works
-- [Comparison](docs/comparison.md) — vs RAG, vs LLM Wiki, vs other systems
+The full book is rendered at
+[radotsvetkov.github.io/memora/docs/](https://radotsvetkov.github.io/memora/docs/)
+and the markdown sources live in [`docs/src/`](docs/src/):
+
+- [Quickstart](docs/src/quickstart.md) — install and first verified citation in 10 minutes
+- [Architecture](docs/src/architecture.md) — claim graph, retrieval, validation
+- [Citation protocol](docs/src/citation-protocol.md) — how validation works
+- [Vault conventions](docs/src/vault-conventions.md) — frontmatter and folder layout
+- [Obsidian + Claude Code guide](docs/src/obsidian-guide.md) — daily-driver setup
+- [MCP tools reference](docs/src/mcp-tools.md) — every tool with examples
+- [Comparison](docs/src/comparison.md) — vs RAG, vs LLM Wiki, vs other systems
+- [Landing page](https://radotsvetkov.github.io/memora) — value prop, claim anatomy, live flow
 
 ## License
 
-Apache-2.0 © Rado
+**Apache 2.0 only.** See [LICENSE](LICENSE).

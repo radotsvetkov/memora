@@ -1,0 +1,81 @@
+:root {
+  /* Memora palette — emerald (verified) + violet (claim) on slate */
+  --memora-emerald:     #10b981;
+  --memora-emerald-dim: #059669;
+  --memora-emerald-glow:#34d399;
+  --memora-violet:      #a78bfa;
+  --memora-violet-dim:  #8b5cf6;
+  --memora-amber:       #f59e0b;
+  --memora-red:         #ef4444;
+  --memora-slate:       #1e293b;
+}
+
+/* Sidebar gets an emerald rail so the verified-brand promise is visible
+   on every doc page. Subtle violet shadow recalls the claim accent. */
+.sidebar .sidebar-scrollbox {
+  border-right: 2px solid var(--memora-emerald);
+  box-shadow: 1px 0 0 0 rgba(167, 139, 250, 0.35);
+}
+
+/* Code blocks get a vertical gradient bar (emerald → violet) instead of
+   a flat border. Keeps the page calm but signals the brand. */
+pre {
+  position: relative;
+  border-left: none !important;
+}
+
+pre::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(
+    180deg,
+    var(--memora-emerald) 0%,
+    var(--memora-violet) 100%
+  );
+  border-radius: 2px 0 0 2px;
+  pointer-events: none;
+}
+
+.chapter li a.active {
+  color: var(--memora-emerald-dim);
+  font-weight: 600;
+}
+
+.chapter li a:hover {
+  color: var(--memora-violet);
+}
+
+.tip {
+  border-left: 4px solid var(--memora-emerald);
+  padding: 12px 16px;
+  background: rgba(16, 185, 129, 0.08);
+  border-radius: 0 4px 4px 0;
+  margin: 16px 0;
+}
+
+.warning {
+  border-left: 4px solid var(--memora-amber);
+  padding: 12px 16px;
+  background: rgba(245, 158, 11, 0.08);
+  border-radius: 0 4px 4px 0;
+  margin: 16px 0;
+}
+
+.chapter li.chapter-item {
+  font-size: 0.95em;
+}
+
+code {
+  font-size: 0.88em;
+}
+
+/* Inline claim markers like [claim:abc123] should stand out without
+   feeling like a link. */
+code:not(pre code) {
+  color: var(--memora-violet-dim);
+  background: rgba(167, 139, 250, 0.08);
+}
