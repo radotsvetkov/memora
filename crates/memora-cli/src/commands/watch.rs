@@ -55,7 +55,9 @@ pub async fn run(args: WatchArgs) -> Result<()> {
     while !stop.load(Ordering::SeqCst) {
         match rx.recv_timeout(Duration::from_secs(1)) {
             Ok(event) => {
-                indexer.handle_event(event).await?;
+                if let Err(err) = indexer.handle_event(event).await {
+                    tracing::warn!(error = %err, "watch event processing failed; continuing");
+                }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,

@@ -36,3 +36,8 @@
 
 ### Fixed
 - Fix `memora watch` runtime panic by removing nested Tokio `block_on` usage and awaiting vault events directly inside the async command loop.
+
+## [0.1.10] - 2026-04-30
+
+### Fixed
+- Keep `memora watch` running when a single file event fails parsing (for example, a note missing YAML frontmatter) by logging and continuing instead of exiting.
