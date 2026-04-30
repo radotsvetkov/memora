@@ -11,7 +11,7 @@ use gray_matter::engine::YAML;
 use gray_matter::Matter;
 use regex::Regex;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_yaml::{Mapping, Value};
 use thiserror::Error;
 
@@ -141,9 +141,9 @@ struct RawFrontmatter {
     created: Option<DateTime<Utc>>,
     updated: Option<DateTime<Utc>>,
     summary: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     tags: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     refs: Vec<String>,
 }
 
@@ -492,8 +492,8 @@ fn parse_partial_frontmatter(value: &Value) -> Result<PartialFrontmatter, ParseE
         created: deserialize_optional_field(map, "created")?,
         updated: deserialize_optional_field(map, "updated")?,
         summary: deserialize_optional_field(map, "summary")?,
-        tags: deserialize_optional_field(map, "tags")?,
-        refs: deserialize_optional_field(map, "refs")?,
+        tags: deserialize_optional_vec_field(map, "tags")?,
+        refs: deserialize_optional_vec_field(map, "refs")?,
     })
 }
 
@@ -508,6 +508,28 @@ where
             .map_err(|err| ParseError::InvalidFrontmatter(format!("invalid field `{key}`: {err}"))),
         None => Ok(None),
     }
+}
+
+fn deserialize_optional_vec_field(
+    map: &Mapping,
+    key: &'static str,
+) -> Result<Option<Vec<String>>, ParseError> {
+    let lookup = Value::String(key.to_string());
+    match map.get(&lookup) {
+        Some(Value::Null) => Ok(Some(Vec::new())),
+        Some(raw) => serde_yaml::from_value(raw.clone())
+            .map(Some)
+            .map_err(|err| ParseError::InvalidFrontmatter(format!("invalid field `{key}`: {err}"))),
+        None => Ok(None),
+    }
+}
+
+fn deserialize_vec_or_default<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<Vec<String>>::deserialize(deserializer)?;
+    Ok(value.unwrap_or_default())
 }
 
 fn split_frontmatter_block(source: &str) -> Result<Option<(String, String)>, ParseError> {
@@ -771,6 +793,27 @@ content
         let file = write_temp(note_text);
         let err = parse(file.path()).expect_err("missing id should fail");
         assert!(matches!(err, ParseError::MissingField("id")));
+    }
+
+    #[test]
+    fn parse_treats_null_tags_and_refs_as_empty_lists() {
+        let note_text = r#"---
+id: null-lists
+region: work
+source: personal
+privacy: private
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-02T00:00:00Z
+summary: "null lists"
+tags: null
+refs: null
+---
+Body
+"#;
+        let file = write_temp(note_text);
+        let note = parse(file.path()).expect("null tags/refs should parse");
+        assert!(note.fm.tags.is_empty());
+        assert!(note.fm.refs.is_empty());
     }
 
     #[test]

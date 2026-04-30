@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
@@ -87,6 +88,7 @@ impl<'a> Indexer<'a> {
 
     pub async fn full_rebuild(&self) -> Result<RebuildStats> {
         let mut stats = RebuildStats::default();
+        let mut seen_ids = std::collections::HashSet::new();
         for path in scan(self.vault.root()) {
             match self.parse_note_for_indexing(&path) {
                 Ok(parsed) => {
@@ -104,6 +106,7 @@ impl<'a> Indexer<'a> {
                             continue;
                         }
                     };
+                    seen_ids.insert(parsed.fm.id.clone());
                     if let Err(err) = self.upsert_note(&parsed).await {
                         stats.errors += 1;
                         tracing::warn!(path = %path.display(), error = %err, "failed to upsert parsed note");
@@ -117,6 +120,10 @@ impl<'a> Indexer<'a> {
                     tracing::warn!(path = %path.display(), error = %err, "failed to parse note during rebuild");
                 }
             }
+        }
+        let pruned = self.prune_missing_notes(&seen_ids)?;
+        if pruned > 0 {
+            tracing::info!(pruned, "pruned deleted notes during full rebuild");
         }
         self.vector_index
             .lock()
@@ -152,6 +159,19 @@ impl<'a> Indexer<'a> {
         mut parsed: crate::note::Note,
     ) -> Result<crate::note::Note> {
         let mut changed = false;
+
+        if let Some(conflicting_path) = self.conflicting_path_for_note_id(path, &parsed.fm.id)? {
+            let new_id = self.next_available_note_id(&parsed.fm.id)?;
+            tracing::warn!(
+                path = %path.display(),
+                conflicting_path = %conflicting_path.display(),
+                old_id = %parsed.fm.id,
+                new_id = %new_id,
+                "detected duplicate note id; rewriting with unique id"
+            );
+            parsed.fm.id = new_id;
+            changed = true;
+        }
 
         let expected_region = note::derive_region_from_path(path, self.vault.root());
         if parsed.fm.region != expected_region {
@@ -298,4 +318,77 @@ fn file_modified_utc(path: &std::path::Path) -> Result<DateTime<Utc>> {
     let modified = fs::metadata(path)?.modified()?;
     let modified = DateTime::<Utc>::from(modified);
     Ok(note::truncate_datetime_to_seconds(modified))
+}
+
+impl<'a> Indexer<'a> {
+    fn prune_missing_notes(&self, seen_ids: &std::collections::HashSet<String>) -> Result<usize> {
+        let mut pruned = 0usize;
+        for id in self.index.all_ids()? {
+            if seen_ids.contains(&id) {
+                continue;
+            }
+            let Some(row) = self.index.get_note(&id)? else {
+                continue;
+            };
+            let resolved_path = resolve_indexed_path(self.vault.root(), &row.path);
+            if resolved_path.exists() {
+                continue;
+            }
+            self.index.delete_note(&id)?;
+            self.vector_index
+                .lock()
+                .map_err(|_| anyhow::anyhow!("vector index mutex poisoned"))?
+                .delete(&id)?;
+            pruned += 1;
+        }
+        Ok(pruned)
+    }
+
+    fn conflicting_path_for_note_id(
+        &self,
+        path: &std::path::Path,
+        id: &str,
+    ) -> Result<Option<PathBuf>> {
+        let Some(row) = self.index.get_note(id)? else {
+            return Ok(None);
+        };
+        let existing_path = resolve_indexed_path(self.vault.root(), &row.path);
+        if existing_path == path {
+            return Ok(None);
+        }
+        if !existing_path.exists() {
+            tracing::info!(
+                note_id = %id,
+                stale_path = %existing_path.display(),
+                "dropping stale index row before reusing note id"
+            );
+            self.index.delete_note(id)?;
+            self.vector_index
+                .lock()
+                .map_err(|_| anyhow::anyhow!("vector index mutex poisoned"))?
+                .delete(id)?;
+            return Ok(None);
+        }
+        Ok(Some(existing_path))
+    }
+
+    fn next_available_note_id(&self, base_id: &str) -> Result<String> {
+        let mut suffix = 2usize;
+        loop {
+            let candidate = format!("{base_id}-{suffix}");
+            if self.index.get_note(&candidate)?.is_none() {
+                return Ok(candidate);
+            }
+            suffix += 1;
+        }
+    }
+}
+
+fn resolve_indexed_path(vault_root: &std::path::Path, indexed_path: &str) -> PathBuf {
+    let raw = PathBuf::from(indexed_path);
+    if raw.is_absolute() || raw.exists() {
+        raw
+    } else {
+        vault_root.join(raw)
+    }
 }

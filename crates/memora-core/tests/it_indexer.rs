@@ -507,3 +507,102 @@ Body.
 
     Ok(())
 }
+
+#[tokio::test]
+async fn full_rebuild_prunes_deleted_notes() -> Result<()> {
+    let temp = tempdir()?;
+    let vault_root = temp.path().join("vault");
+    fs::create_dir_all(&vault_root)?;
+
+    let note_path = vault_root.join("prune-me.md");
+    fs::write(
+        &note_path,
+        r#"---
+id: prune-me
+region: default
+source: personal
+privacy: private
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Prune me"
+tags: []
+refs: []
+---
+Body.
+"#,
+    )?;
+
+    let index_path = temp.path().join("index").join("memora.db");
+    let index = Index::open(&index_path)?;
+    let vault = Vault::new(&vault_root);
+    let embedder: Arc<dyn Embedder> = Arc::new(DeterministicEmbedder::new(64));
+    let vector_index = Arc::new(Mutex::new(VectorIndex::open_or_create(
+        &temp.path().join("index").join("vectors"),
+        embedder.dim(),
+    )?));
+    let indexer = Indexer::new(&vault, &index, embedder, vector_index);
+
+    indexer.full_rebuild().await?;
+    assert!(index.get_note("prune-me")?.is_some());
+
+    fs::remove_file(&note_path)?;
+    indexer.full_rebuild().await?;
+
+    assert!(index.get_note("prune-me")?.is_none());
+    assert!(!index.all_ids()?.iter().any(|id| id == "prune-me"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn full_rebuild_rewrites_duplicate_note_ids_to_unique_values() -> Result<()> {
+    let temp = tempdir()?;
+    let vault_root = temp.path().join("vault");
+    fs::create_dir_all(vault_root.join("a"))?;
+    fs::create_dir_all(vault_root.join("b"))?;
+
+    let first = vault_root.join("a/first.md");
+    let second = vault_root.join("b/second.md");
+    let duplicate_id_frontmatter = |body: &str| {
+        format!(
+            r#"---
+id: dup-note
+region: default
+source: personal
+privacy: private
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Duplicate id"
+tags: []
+refs: []
+---
+{body}
+"#
+        )
+    };
+    fs::write(&first, duplicate_id_frontmatter("first body"))?;
+    fs::write(&second, duplicate_id_frontmatter("second body"))?;
+
+    let index_path = temp.path().join("index").join("memora.db");
+    let index = Index::open(&index_path)?;
+    let vault = Vault::new(&vault_root);
+    let embedder: Arc<dyn Embedder> = Arc::new(DeterministicEmbedder::new(64));
+    let vector_index = Arc::new(Mutex::new(VectorIndex::open_or_create(
+        &temp.path().join("index").join("vectors"),
+        embedder.dim(),
+    )?));
+    let indexer = Indexer::new(&vault, &index, embedder, vector_index)
+        .with_frontmatter_fix_mode(FrontmatterFixMode::RewriteMissing);
+
+    indexer.full_rebuild().await?;
+
+    let first_note = note::parse(&first)?;
+    let second_note = note::parse(&second)?;
+    let ids = [first_note.fm.id.as_str(), second_note.fm.id.as_str()];
+    assert!(ids.contains(&"dup-note"));
+    assert!(ids.contains(&"dup-note-2"));
+    assert!(index.get_note("dup-note")?.is_some());
+    assert!(index.get_note("dup-note-2")?.is_some());
+
+    Ok(())
+}
