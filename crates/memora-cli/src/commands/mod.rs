@@ -1,6 +1,7 @@
 pub mod challenge;
 pub mod claims;
 pub mod consolidate;
+pub mod doctor;
 pub mod index;
 pub mod init;
 pub mod privacy;

@@ -24,6 +24,7 @@ enum Commands {
     },
     Challenge(commands::challenge::ChallengeArgs),
     Consolidate(commands::consolidate::ConsolidateArgs),
+    Doctor(commands::doctor::DoctorArgs),
     Privacy {
         #[command(subcommand)]
         command: commands::privacy::PrivacyCommand,
@@ -42,6 +43,7 @@ async fn main() -> Result<()> {
         Commands::Claims { command } => commands::claims::run(command).await?,
         Commands::Challenge(args) => commands::challenge::run(args).await?,
         Commands::Consolidate(args) => commands::consolidate::run(args).await?,
+        Commands::Doctor(args) => commands::doctor::run(args)?,
         Commands::Privacy { command } => commands::privacy::run(command)?,
         Commands::Query(args) => commands::query::run(args).await?,
     }

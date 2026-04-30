@@ -1,9 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use figment::providers::{Format, Serialized, Toml};
 use figment::Figment;
+use memora_core::indexer::RefsSyncMode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -11,6 +12,8 @@ pub struct AppConfig {
     pub llm: LlmConfig,
     pub embed: EmbedConfig,
     pub retrieval: RetrievalConfig,
+    pub watch: WatchConfig,
+    pub frontmatter: FrontmatterConfig,
     pub consolidation: ConsolidationConfig,
     pub challenger: ChallengerConfig,
     pub privacy: PrivacyConfig,
@@ -78,6 +81,42 @@ pub struct RetrievalConfig {
 impl Default for RetrievalConfig {
     fn default() -> Self {
         Self { top_k: 5 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatchConfig {
+    pub debounce_ms: u64,
+}
+
+impl Default for WatchConfig {
+    fn default() -> Self {
+        Self { debounce_ms: 250 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrontmatterConfig {
+    pub refs_mode: String,
+}
+
+impl FrontmatterConfig {
+    pub fn refs_sync_mode(&self) -> Result<RefsSyncMode> {
+        match self.refs_mode.as_str() {
+            "sync_from_wikilinks" => Ok(RefsSyncMode::SyncFromWikilinks),
+            "manual" => Ok(RefsSyncMode::Manual),
+            other => Err(anyhow!(
+                "invalid frontmatter.refs_mode `{other}`; expected `sync_from_wikilinks` or `manual`"
+            )),
+        }
+    }
+}
+
+impl Default for FrontmatterConfig {
+    fn default() -> Self {
+        Self {
+            refs_mode: "sync_from_wikilinks".to_string(),
+        }
     }
 }
 

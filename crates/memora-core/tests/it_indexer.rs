@@ -1,11 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use memora_core::indexer::{FrontmatterFixMode, Indexer};
-use memora_core::{note, Embedder, Index, Vault, VectorIndex};
+use memora_core::{note, Embedder, Index, Vault, VaultEvent, VectorIndex};
 use tempfile::tempdir;
 
 fn write_note(path: &Path, id: &str, summary: &str, tags: &[&str], body: &str) -> Result<()> {
@@ -299,6 +301,209 @@ Body text for move.
             .region,
         "work"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn modified_event_updates_frontmatter_updated_timestamp() -> Result<()> {
+    let temp = tempdir()?;
+    let vault_root = temp.path().join("vault");
+    fs::create_dir_all(&vault_root)?;
+    let note_path = vault_root.join("update-me.md");
+    fs::write(
+        &note_path,
+        r#"---
+id: update-me
+region: default
+source: personal
+privacy: private
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Update me"
+tags: []
+refs: []
+---
+Initial body text.
+"#,
+    )?;
+
+    let index_path = temp.path().join("index").join("memora.db");
+    let index = Index::open(&index_path)?;
+    let vault = Vault::new(&vault_root);
+    let embedder: Arc<dyn Embedder> = Arc::new(DeterministicEmbedder::new(64));
+    let vector_index = Arc::new(Mutex::new(VectorIndex::open_or_create(
+        &temp.path().join("index").join("vectors"),
+        embedder.dim(),
+    )?));
+    let indexer = Indexer::new(&vault, &index, embedder, vector_index);
+    indexer
+        .handle_event(VaultEvent::Created(note_path.clone()))
+        .await?;
+
+    let before = note::parse(&note_path)?.fm.updated;
+    std::thread::sleep(Duration::from_secs(1));
+    fs::write(
+        &note_path,
+        r#"---
+id: update-me
+region: default
+source: personal
+privacy: private
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Update me"
+tags: []
+refs: []
+---
+Initial body text with new content.
+"#,
+    )?;
+    indexer
+        .handle_event(VaultEvent::Modified(note_path.clone()))
+        .await?;
+
+    let reparsed = note::parse(&note_path)?;
+    let after = reparsed.fm.updated;
+    assert!(after > before);
+    assert!(!after.to_rfc3339().contains('.'));
+
+    let db_updated = index
+        .get_note("update-me")?
+        .expect("note should exist in index")
+        .updated;
+    let db_updated_dt = DateTime::parse_from_rfc3339(&db_updated)?.with_timezone(&Utc);
+    assert_eq!(db_updated_dt, after);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn modified_event_syncs_frontmatter_refs_from_wikilinks() -> Result<()> {
+    let temp = tempdir()?;
+    let vault_root = temp.path().join("vault");
+    fs::create_dir_all(&vault_root)?;
+    let target_path = vault_root.join("target-note.md");
+    fs::write(
+        &target_path,
+        r#"---
+id: target-note
+region: default
+source: personal
+privacy: private
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Target"
+tags: []
+refs: []
+---
+Target body.
+"#,
+    )?;
+
+    let note_path = vault_root.join("source-note.md");
+    fs::write(
+        &note_path,
+        r#"---
+id: source-note
+region: default
+source: personal
+privacy: private
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Source"
+tags: []
+refs: []
+---
+No links yet.
+"#,
+    )?;
+
+    let index_path = temp.path().join("index").join("memora.db");
+    let index = Index::open(&index_path)?;
+    let vault = Vault::new(&vault_root);
+    let embedder: Arc<dyn Embedder> = Arc::new(DeterministicEmbedder::new(64));
+    let vector_index = Arc::new(Mutex::new(VectorIndex::open_or_create(
+        &temp.path().join("index").join("vectors"),
+        embedder.dim(),
+    )?));
+    let indexer = Indexer::new(&vault, &index, embedder, vector_index);
+
+    indexer
+        .handle_event(VaultEvent::Created(target_path.clone()))
+        .await?;
+    indexer
+        .handle_event(VaultEvent::Created(note_path.clone()))
+        .await?;
+
+    std::thread::sleep(Duration::from_secs(1));
+    fs::write(
+        &note_path,
+        r#"---
+id: source-note
+region: default
+source: personal
+privacy: private
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Source"
+tags: []
+refs: []
+---
+Now linking to [[target-note]].
+"#,
+    )?;
+    indexer
+        .handle_event(VaultEvent::Modified(note_path.clone()))
+        .await?;
+
+    let reparsed = note::parse(&note_path)?;
+    assert_eq!(reparsed.fm.refs, vec!["target-note".to_string()]);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn full_rebuild_normalizes_invalid_source_and_privacy() -> Result<()> {
+    let temp = tempdir()?;
+    let vault_root = temp.path().join("vault");
+    fs::create_dir_all(&vault_root)?;
+    let note_path = vault_root.join("invalid-meta.md");
+    fs::write(
+        &note_path,
+        r#"---
+id: invalid-meta
+region: default
+source: unknown
+privacy: ultra-secret
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Invalid enums"
+tags: []
+refs: []
+---
+Body.
+"#,
+    )?;
+
+    let index_path = temp.path().join("index").join("memora.db");
+    let index = Index::open(&index_path)?;
+    let vault = Vault::new(&vault_root);
+    let embedder: Arc<dyn Embedder> = Arc::new(DeterministicEmbedder::new(64));
+    let vector_index = Arc::new(Mutex::new(VectorIndex::open_or_create(
+        &temp.path().join("index").join("vectors"),
+        embedder.dim(),
+    )?));
+    let indexer = Indexer::new(&vault, &index, embedder, vector_index)
+        .with_frontmatter_fix_mode(FrontmatterFixMode::RewriteMissing);
+
+    let stats = indexer.full_rebuild().await?;
+    assert_eq!(stats.errors, 0);
+
+    let reparsed = note::parse(&note_path)?;
+    assert_eq!(reparsed.fm.source.to_string(), "personal");
+    assert_eq!(reparsed.fm.privacy.to_string(), "private");
+    assert!(index.get_note("invalid-meta")?.is_some());
 
     Ok(())
 }

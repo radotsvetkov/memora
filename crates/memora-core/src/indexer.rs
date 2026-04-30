@@ -1,6 +1,8 @@
+use std::fs;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 
 use crate::claims::{
     ClaimExtractor, ClaimStore, ContradictionDetector, Provenance, StalenessTracker,
@@ -19,6 +21,13 @@ pub enum FrontmatterFixMode {
     InferInMemoryOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RefsSyncMode {
+    #[default]
+    SyncFromWikilinks,
+    Manual,
+}
+
 pub struct Indexer<'a> {
     pub vault: &'a Vault,
     pub index: &'a Index,
@@ -28,6 +37,7 @@ pub struct Indexer<'a> {
     pub claim_store: Option<ClaimStore<'a>>,
     pub extract_reference_notes: bool,
     pub frontmatter_fix_mode: FrontmatterFixMode,
+    pub refs_sync_mode: RefsSyncMode,
 }
 
 impl<'a> Indexer<'a> {
@@ -46,6 +56,7 @@ impl<'a> Indexer<'a> {
             claim_store: None,
             extract_reference_notes: false,
             frontmatter_fix_mode: FrontmatterFixMode::Strict,
+            refs_sync_mode: RefsSyncMode::SyncFromWikilinks,
         }
     }
 
@@ -69,12 +80,18 @@ impl<'a> Indexer<'a> {
         self
     }
 
+    pub fn with_refs_sync_mode(mut self, mode: RefsSyncMode) -> Self {
+        self.refs_sync_mode = mode;
+        self
+    }
+
     pub async fn full_rebuild(&self) -> Result<RebuildStats> {
         let mut stats = RebuildStats::default();
         for path in scan(self.vault.root()) {
             match self.parse_note_for_indexing(&path) {
                 Ok(parsed) => {
-                    let parsed = match self.rewrite_region_if_moved(path.as_path(), parsed) {
+                    let parsed = match self.align_frontmatter_to_filesystem(path.as_path(), parsed)
+                    {
                         Ok(parsed) => parsed,
                         Err(err) => {
                             stats.skipped += 1;
@@ -113,7 +130,7 @@ impl<'a> Indexer<'a> {
         match ev {
             VaultEvent::Modified(path) | VaultEvent::Created(path) | VaultEvent::Renamed(path) => {
                 let parsed = self.parse_note_for_indexing(&path)?;
-                let parsed = self.rewrite_region_if_moved(path.as_path(), parsed)?;
+                let parsed = self.align_frontmatter_to_filesystem(path.as_path(), parsed)?;
                 self.upsert_note(&parsed).await?;
             }
             VaultEvent::Deleted(path) => {
@@ -129,23 +146,53 @@ impl<'a> Indexer<'a> {
         Ok(())
     }
 
-    fn rewrite_region_if_moved(
+    fn align_frontmatter_to_filesystem(
         &self,
         path: &std::path::Path,
         mut parsed: crate::note::Note,
     ) -> Result<crate::note::Note> {
+        let mut changed = false;
+
         let expected_region = note::derive_region_from_path(path, self.vault.root());
-        if parsed.fm.region == expected_region {
-            return Ok(parsed);
+        if parsed.fm.region != expected_region {
+            tracing::info!(
+                path = %path.display(),
+                old_region = %parsed.fm.region,
+                new_region = %expected_region,
+                "updating note region to match folder path"
+            );
+            parsed.fm.region = expected_region;
+            changed = true;
         }
 
-        tracing::info!(
-            path = %path.display(),
-            old_region = %parsed.fm.region,
-            new_region = %expected_region,
-            "updating note region to match folder path"
-        );
-        parsed.fm.region = expected_region;
+        let expected_updated = file_modified_utc(path)?;
+        if parsed.fm.updated != expected_updated {
+            tracing::info!(
+                path = %path.display(),
+                old_updated = %parsed.fm.updated.to_rfc3339(),
+                new_updated = %expected_updated.to_rfc3339(),
+                "updating note timestamp to match file mtime"
+            );
+            parsed.fm.updated = expected_updated;
+            changed = true;
+        }
+
+        if self.refs_sync_mode == RefsSyncMode::SyncFromWikilinks
+            && parsed.fm.refs != parsed.wikilinks
+        {
+            tracing::info!(
+                path = %path.display(),
+                old_refs = ?parsed.fm.refs,
+                new_refs = ?parsed.wikilinks,
+                "updating frontmatter refs to match detected wikilinks"
+            );
+            parsed.fm.refs = parsed.wikilinks.clone();
+            changed = true;
+        }
+
+        if !changed {
+            return Ok(parsed);
+        }
         note::rewrite_with_frontmatter(path, &parsed.fm, &parsed.body)?;
         self.parse_note_for_indexing(path)
     }
@@ -245,4 +292,10 @@ impl<'a> Indexer<'a> {
 fn make_embedding_text(summary: &str, body: &str) -> String {
     let body_head: String = body.chars().take(2_000).collect();
     normalize_text(&format!("{summary}\n{body_head}"))
+}
+
+fn file_modified_utc(path: &std::path::Path) -> Result<DateTime<Utc>> {
+    let modified = fs::metadata(path)?.modified()?;
+    let modified = DateTime::<Utc>::from(modified);
+    Ok(note::truncate_datetime_to_seconds(modified))
 }

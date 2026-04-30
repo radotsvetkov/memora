@@ -242,15 +242,7 @@ pub fn rewrite_with_frontmatter(
         .map_err(|err| ParseError::InvalidFrontmatter(err.to_string()))?;
     let new_content = format!("---\n{serialized}---\n{original_body}");
 
-    let parent = path.parent().ok_or_else(|| {
-        ParseError::InvalidFrontmatter("note path has no parent directory".to_string())
-    })?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-    temp.write_all(new_content.as_bytes())?;
-    temp.flush()?;
-    temp.as_file().sync_all()?;
-    fs::rename(temp.path(), path)?;
-    Ok(())
+    write_content_atomically(path, &new_content)
 }
 
 fn parse_or_infer_impl(
@@ -284,8 +276,69 @@ fn parse_or_infer_impl(
                 action,
             ))
         }
-        Err(err @ ParseError::InvalidFrontmatter(_)) | Err(err @ ParseError::Io(_)) => Err(err),
+        Err(err @ ParseError::InvalidFrontmatter(_)) => {
+            if !rewrite {
+                return Err(err);
+            }
+            if normalize_invalid_source_and_privacy(path, &source)? {
+                return parse_or_infer_impl(path, vault_root, rewrite);
+            }
+            Err(err)
+        }
+        Err(err @ ParseError::Io(_)) => Err(err),
     }
+}
+
+fn normalize_invalid_source_and_privacy(path: &Path, source: &str) -> Result<bool, ParseError> {
+    let Some((yaml, body)) = split_frontmatter_block(source)? else {
+        return Ok(false);
+    };
+    let mut yaml_value: Value = serde_yaml::from_str(&yaml)
+        .map_err(|err| ParseError::InvalidFrontmatter(err.to_string()))?;
+    let Some(map) = yaml_value.as_mapping_mut() else {
+        return Ok(false);
+    };
+
+    let mut changed = false;
+    changed |= normalize_enum_frontmatter_field(map, "source", "personal", |value| {
+        NoteSource::from_str(value).is_ok()
+    });
+    changed |= normalize_enum_frontmatter_field(map, "privacy", "private", |value| {
+        Privacy::from_str(value).is_ok()
+    });
+
+    if !changed {
+        return Ok(false);
+    }
+    let serialized = serde_yaml::to_string(&yaml_value)
+        .map_err(|err| ParseError::InvalidFrontmatter(err.to_string()))?;
+    let rewritten = format!("---\n{serialized}---\n{body}");
+    write_content_atomically(path, &rewritten)?;
+    Ok(true)
+}
+
+fn normalize_enum_frontmatter_field<F>(
+    map: &mut Mapping,
+    key: &'static str,
+    fallback: &'static str,
+    is_valid: F,
+) -> bool
+where
+    F: Fn(&str) -> bool,
+{
+    let lookup = Value::String(key.to_string());
+    let Some(raw) = map.get(&lookup) else {
+        return false;
+    };
+    let mut changed = false;
+    match raw {
+        Value::String(value) if is_valid(value.as_str()) => {}
+        _ => {
+            changed = true;
+            map.insert(lookup, Value::String(fallback.to_string()));
+        }
+    }
+    changed
 }
 
 fn parse_from_source(path: &Path, source: &str) -> Result<Note, ParseError> {
@@ -554,6 +607,18 @@ fn datetime_from_system_time_secs(system_time: SystemTime) -> Result<DateTime<Ut
 
 pub fn truncate_datetime_to_seconds(value: DateTime<Utc>) -> DateTime<Utc> {
     DateTime::<Utc>::from_timestamp(value.timestamp(), 0).unwrap_or(value)
+}
+
+fn write_content_atomically(path: &Path, content: &str) -> Result<(), ParseError> {
+    let parent = path.parent().ok_or_else(|| {
+        ParseError::InvalidFrontmatter("note path has no parent directory".to_string())
+    })?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(content.as_bytes())?;
+    temp.flush()?;
+    temp.as_file().sync_all()?;
+    fs::rename(temp.path(), path)?;
+    Ok(())
 }
 
 fn infer_unique_id(path: &Path, vault_root: &Path) -> Result<String, ParseError> {
@@ -939,6 +1004,40 @@ Body
 
         let err = parse_or_infer(&path, &vault_root).expect_err("malformed yaml should fail");
         assert!(matches!(err, ParseError::InvalidFrontmatter(_)));
+    }
+
+    #[test]
+    fn parse_or_infer_normalizes_invalid_source_and_privacy_values() {
+        let temp = tempdir().expect("create tempdir");
+        let vault_root = temp.path().join("vault");
+        fs::create_dir_all(&vault_root).expect("create vault");
+        let path = vault_root.join("invalid-enums.md");
+        fs::write(
+            &path,
+            r#"---
+id: invalid-enums
+region: default
+source: random
+privacy: top-secret
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Invalid enum values"
+tags: []
+refs: []
+---
+Body
+"#,
+        )
+        .expect("write note");
+
+        let (parsed, _) =
+            parse_or_infer(&path, &vault_root).expect("parse_or_infer should recover");
+        assert_eq!(parsed.fm.source, NoteSource::Personal);
+        assert_eq!(parsed.fm.privacy, Privacy::Private);
+
+        let rewritten = fs::read_to_string(&path).expect("read rewritten note");
+        assert!(rewritten.contains("source: personal"));
+        assert!(rewritten.contains("privacy: private"));
     }
 
     #[test]

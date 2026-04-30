@@ -8,6 +8,7 @@
 
 - [Quickstart (10 minutes)](./quickstart.md)
 - [Vault conventions](./vault-conventions.md)
+- [Obsidian properties template](./obsidian-properties-template.md)
 - [Obsidian + Claude Code guide](./obsidian-guide.md)
 
 ---

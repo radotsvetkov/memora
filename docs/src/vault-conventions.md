@@ -8,8 +8,13 @@ Memora works with plain Obsidian-created notes that have no frontmatter.
 On first `memora index` or `memora watch`, it auto-fills any missing fields
 and prepends a YAML block while preserving your original note body byte-for-byte.
 
-You can still provide and manage frontmatter manually; Memora only fills missing
-fields and keeps user-provided values as-is.
+You can still provide and manage frontmatter manually. Memora applies a few
+quality-of-life normalizations while indexing:
+
+- `region` follows the note's folder path relative to the vault root.
+- `updated` follows the file mtime (second precision).
+- `refs` can optionally mirror detected wikilinks (configurable).
+- Invalid `source` / `privacy` enum values are normalized to defaults.
 
 ```yaml
 ---
@@ -63,5 +68,18 @@ Claims extracted from secret spans are marked `secret` even when note privacy is
 - `.memora/memora.db`
 - `.memora/vectors/*`
 - `.memora/last_challenger.json`
+- `.memora/watch.lock` (present while `memora watch` is running)
 
 Derived markdown can be regenerated and should not be edited as source-of-truth notes.
+
+## Frontmatter config knobs
+
+In `.memora/config.toml`:
+
+```toml
+[frontmatter]
+refs_mode = "sync_from_wikilinks" # or "manual"
+```
+
+- `sync_from_wikilinks`: keep `refs` aligned to `[[wikilinks]]` in body.
+- `manual`: never auto-rewrite `refs`.

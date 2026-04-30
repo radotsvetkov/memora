@@ -40,8 +40,10 @@ pub async fn run(args: IndexArgs) -> Result<()> {
         llm: llm.as_ref(),
         model_label: llm.model_name().to_string(),
     };
+    let refs_sync_mode = cfg.frontmatter.refs_sync_mode()?;
     let indexer = Indexer::new(&vault, &index, embedder, Arc::new(Mutex::new(vector)))
         .with_frontmatter_fix_mode(fix_mode)
+        .with_refs_sync_mode(refs_sync_mode)
         .with_claims(claim_extractor, claim_store);
     let stats = indexer.full_rebuild().await?;
     println!(

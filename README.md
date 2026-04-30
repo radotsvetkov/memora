@@ -157,6 +157,7 @@ and the markdown sources live in [`docs/src/`](docs/src/):
 - [Architecture](docs/src/architecture.md) — claim graph, retrieval, validation
 - [Citation protocol](docs/src/citation-protocol.md) — how validation works
 - [Vault conventions](docs/src/vault-conventions.md) — frontmatter and folder layout
+- [Obsidian properties template](docs/src/obsidian-properties-template.md) — dropdown-friendly defaults
 - [Obsidian + Claude Code guide](docs/src/obsidian-guide.md) — daily-driver setup
 - [MCP tools reference](docs/src/mcp-tools.md) — every tool with examples
 - [Comparison](docs/src/comparison.md) — vs RAG, vs LLM Wiki, vs other systems
