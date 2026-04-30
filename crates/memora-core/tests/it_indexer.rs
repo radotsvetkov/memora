@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use memora_core::indexer::Indexer;
+use memora_core::indexer::{FrontmatterFixMode, Indexer};
 use memora_core::{note, Embedder, Index, Vault, VectorIndex};
 use tempfile::tempdir;
 
@@ -177,6 +177,66 @@ comet comet comet comet trajectory and observations updated
     let results = index.bm25_search("comet", 5)?;
     assert!(!results.is_empty());
     assert_eq!(results[0].0, "note-epsilon");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn it_indexer_auto_fixes_real_obsidian_style_vault() -> Result<()> {
+    let temp = tempdir()?;
+    let vault_root = temp.path().join("vault");
+    fs::create_dir_all(vault_root.join("journal"))?;
+    fs::create_dir_all(vault_root.join("projects"))?;
+
+    let fixture_notes = vec![
+        (
+            vault_root.join("Daily Note.md"),
+            "Daily planning kickoff\n- review backlog\n",
+        ),
+        (
+            vault_root.join("Project Idea.md"),
+            "Build a lightweight claim graph cache\n",
+        ),
+        (
+            vault_root.join("2026-04-30.md"),
+            "Thursday retrospective\nWins and blockers\n",
+        ),
+        (
+            vault_root.join("journal/Morning.md"),
+            "Morning reflection\nHydrate and stretch\n",
+        ),
+        (
+            vault_root.join("projects/Launch Checklist.md"),
+            "Ship checklist draft\n",
+        ),
+    ];
+    for (path, body) in &fixture_notes {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, body)?;
+    }
+
+    let index_path = temp.path().join("index").join("memora.db");
+    let index = Index::open(&index_path)?;
+    let vault = Vault::new(&vault_root);
+    let embedder: Arc<dyn Embedder> = Arc::new(DeterministicEmbedder::new(64));
+    let vector_index = Arc::new(Mutex::new(VectorIndex::open_or_create(
+        &temp.path().join("index").join("vectors"),
+        embedder.dim(),
+    )?));
+    let indexer = Indexer::new(&vault, &index, embedder, vector_index)
+        .with_frontmatter_fix_mode(FrontmatterFixMode::RewriteMissing);
+
+    let stats = indexer.full_rebuild().await?;
+    assert_eq!(stats.inserted, 5);
+    assert_eq!(stats.errors, 0);
+
+    for (path, original_body) in fixture_notes {
+        let file = fs::read_to_string(&path)?;
+        assert!(file.starts_with("---\n"));
+        assert!(file.ends_with(&original_body));
+    }
 
     Ok(())
 }

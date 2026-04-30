@@ -8,8 +8,16 @@ use crate::claims::{
 use crate::embed::{normalize_text, Embedder};
 use crate::index::{Index, RebuildStats, VectorIndex};
 use crate::note;
-use crate::note::NoteSource;
+use crate::note::{FrontmatterAction, NoteSource};
 use crate::vault::{scan, Vault, VaultEvent};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrontmatterFixMode {
+    #[default]
+    Strict,
+    RewriteMissing,
+    InferInMemoryOnly,
+}
 
 pub struct Indexer<'a> {
     pub vault: &'a Vault,
@@ -19,6 +27,7 @@ pub struct Indexer<'a> {
     pub claim_extractor: Option<ClaimExtractor<'a>>,
     pub claim_store: Option<ClaimStore<'a>>,
     pub extract_reference_notes: bool,
+    pub frontmatter_fix_mode: FrontmatterFixMode,
 }
 
 impl<'a> Indexer<'a> {
@@ -36,6 +45,7 @@ impl<'a> Indexer<'a> {
             claim_extractor: None,
             claim_store: None,
             extract_reference_notes: false,
+            frontmatter_fix_mode: FrontmatterFixMode::Strict,
         }
     }
 
@@ -54,10 +64,15 @@ impl<'a> Indexer<'a> {
         self
     }
 
+    pub fn with_frontmatter_fix_mode(mut self, mode: FrontmatterFixMode) -> Self {
+        self.frontmatter_fix_mode = mode;
+        self
+    }
+
     pub async fn full_rebuild(&self) -> Result<RebuildStats> {
         let mut stats = RebuildStats::default();
         for path in scan(self.vault.root()) {
-            match note::parse(&path) {
+            match self.parse_note_for_indexing(&path) {
                 Ok(parsed) => {
                     if let Err(err) = self.upsert_note(&parsed).await {
                         stats.errors += 1;
@@ -84,7 +99,7 @@ impl<'a> Indexer<'a> {
     pub async fn handle_event(&self, ev: VaultEvent) -> Result<()> {
         match ev {
             VaultEvent::Modified(path) | VaultEvent::Created(path) => {
-                let parsed = note::parse(&path)?;
+                let parsed = self.parse_note_for_indexing(&path)?;
                 self.upsert_note(&parsed).await?;
             }
             VaultEvent::Deleted(path) => {
@@ -98,6 +113,26 @@ impl<'a> Indexer<'a> {
             }
         }
         Ok(())
+    }
+
+    fn parse_note_for_indexing(&self, path: &std::path::Path) -> Result<crate::note::Note> {
+        match self.frontmatter_fix_mode {
+            FrontmatterFixMode::Strict => note::parse(path).map_err(Into::into),
+            FrontmatterFixMode::RewriteMissing => {
+                let (note, action) = note::parse_or_infer(path, self.vault.root())?;
+                if action == FrontmatterAction::InferredAndRewritten {
+                    tracing::info!("rewrote frontmatter for {}", path.display());
+                }
+                Ok(note)
+            }
+            FrontmatterFixMode::InferInMemoryOnly => {
+                let (note, action) = note::parse_or_infer_in_memory(path, self.vault.root())?;
+                if action == FrontmatterAction::InferredInMemoryOnly {
+                    tracing::info!(path = %path.display(), "inferred frontmatter in-memory only");
+                }
+                Ok(note)
+            }
+        }
     }
 
     pub async fn vector_search(&self, query: &str, k: usize) -> Result<Vec<(String, f32)>> {

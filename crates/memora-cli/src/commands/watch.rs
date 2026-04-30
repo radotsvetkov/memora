@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Args;
+use memora_core::indexer::FrontmatterFixMode;
 use memora_core::vault::watch as watch_vault;
 use memora_core::{Scheduler, SchedulerConfig};
 use memora_llm::{make_client, LlmProvider};
@@ -15,6 +16,10 @@ use crate::runtime::{build_embedder, open_index, open_vault, open_vector};
 pub struct WatchArgs {
     #[arg(long, default_value = "vault")]
     pub vault: std::path::PathBuf,
+    #[arg(long, conflicts_with = "no_auto_fix_frontmatter")]
+    pub auto_fix_frontmatter: bool,
+    #[arg(long, conflicts_with = "auto_fix_frontmatter")]
+    pub no_auto_fix_frontmatter: bool,
 }
 
 pub async fn run(args: WatchArgs) -> Result<()> {
@@ -28,7 +33,8 @@ pub async fn run(args: WatchArgs) -> Result<()> {
         index.as_ref(),
         embedder,
         Arc::new(Mutex::new(vector)),
-    );
+    )
+    .with_frontmatter_fix_mode(resolve_watch_fix_mode(&args));
     indexer.full_rebuild().await?;
 
     let provider = match cfg.llm.provider.as_str() {
@@ -65,4 +71,12 @@ pub async fn run(args: WatchArgs) -> Result<()> {
     }
     scheduler.abort();
     Ok(())
+}
+
+fn resolve_watch_fix_mode(args: &WatchArgs) -> FrontmatterFixMode {
+    if args.no_auto_fix_frontmatter {
+        FrontmatterFixMode::Strict
+    } else {
+        FrontmatterFixMode::RewriteMissing
+    }
 }

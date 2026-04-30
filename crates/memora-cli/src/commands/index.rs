@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::Args;
 use memora_core::claims::{ClaimExtractor, ClaimStore};
-use memora_core::indexer::Indexer;
+use memora_core::indexer::{FrontmatterFixMode, Indexer};
+use memora_core::note::ParseError;
 use memora_llm::{make_client, LlmProvider};
 
 use crate::config::AppConfig;
@@ -13,9 +14,16 @@ use crate::runtime::{build_embedder, open_index, open_vault, open_vector};
 pub struct IndexArgs {
     #[arg(long, default_value = "vault")]
     pub vault: std::path::PathBuf,
+    #[arg(long, conflicts_with = "no_auto_fix_frontmatter")]
+    pub auto_fix_frontmatter: bool,
+    #[arg(long, conflicts_with = "auto_fix_frontmatter")]
+    pub no_auto_fix_frontmatter: bool,
 }
 
 pub async fn run(args: IndexArgs) -> Result<()> {
+    let (total_notes, needs_fixing) = prescan_frontmatter(&args.vault)?;
+    let fix_mode = choose_fix_mode(&args, total_notes, needs_fixing)?;
+
     let cfg = AppConfig::load(&args.vault)?;
     let vault = open_vault(&args.vault);
     let index = open_index(&args.vault)?;
@@ -33,6 +41,7 @@ pub async fn run(args: IndexArgs) -> Result<()> {
         model_label: llm.model_name().to_string(),
     };
     let indexer = Indexer::new(&vault, &index, embedder, Arc::new(Mutex::new(vector)))
+        .with_frontmatter_fix_mode(fix_mode)
         .with_claims(claim_extractor, claim_store);
     let stats = indexer.full_rebuild().await?;
     println!(
@@ -40,4 +49,51 @@ pub async fn run(args: IndexArgs) -> Result<()> {
         stats.inserted, stats.skipped, stats.errors
     );
     Ok(())
+}
+
+fn prescan_frontmatter(vault_root: &std::path::Path) -> Result<(usize, usize)> {
+    let mut total = 0usize;
+    let mut needs_fix = 0usize;
+    for path in memora_core::scan(vault_root) {
+        total += 1;
+        match memora_core::note::parse(&path) {
+            Ok(_) => {}
+            Err(ParseError::MissingFrontmatter) | Err(ParseError::MissingField(_)) => {
+                needs_fix += 1;
+            }
+            Err(_) => {}
+        }
+    }
+    Ok((total, needs_fix))
+}
+
+fn choose_fix_mode(
+    args: &IndexArgs,
+    total_notes: usize,
+    needs_fixing: usize,
+) -> Result<FrontmatterFixMode> {
+    if args.no_auto_fix_frontmatter {
+        return Ok(FrontmatterFixMode::Strict);
+    }
+    if args.auto_fix_frontmatter || needs_fixing == 0 {
+        return Ok(FrontmatterFixMode::RewriteMissing);
+    }
+
+    println!(
+        "Found {total_notes} notes. {needs_fixing} need frontmatter added.\n\
+         Memora will prepend YAML frontmatter to these files (id, region,\n\
+         created, updated, summary inferred from filename and content).\n\
+         Your existing content is preserved.\n\n\
+         Proceed? [y/N]"
+    );
+
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    let proceed = matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+    if !proceed {
+        return Err(anyhow!(
+            "Re-run with --auto-fix-frontmatter or add frontmatter manually."
+        ));
+    }
+    Ok(FrontmatterFixMode::RewriteMissing)
 }

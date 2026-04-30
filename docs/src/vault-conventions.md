@@ -2,7 +2,14 @@
 
 Memora reads markdown notes from your vault and writes derived artifacts under `.memora/`.
 
-## Required frontmatter
+## Frontmatter (recommended)
+
+Memora works with plain Obsidian-created notes that have no frontmatter.
+On first `memora index` or `memora watch`, it auto-fills any missing fields
+and prepends a YAML block while preserving your original note body byte-for-byte.
+
+You can still provide and manage frontmatter manually; Memora only fills missing
+fields and keeps user-provided values as-is.
 
 ```yaml
 ---
@@ -14,6 +21,22 @@ created: 2026-04-01T00:00:00Z
 updated: 2026-04-01T00:00:00Z
 summary: "Short summary"
 tags: [tag1, tag2]
+refs: []
+---
+```
+
+Example inferred frontmatter for an Obsidian note `work/Project Idea.md`:
+
+```yaml
+---
+id: project-idea
+region: work
+source: personal
+privacy: private
+created: 2026-04-30T18:42:10Z
+updated: 2026-04-30T18:42:10Z
+summary: "First non-empty line from the note body"
+tags: []
 refs: []
 ---
 ```

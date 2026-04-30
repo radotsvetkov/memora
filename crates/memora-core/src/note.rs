@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
+use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -7,7 +9,9 @@ use chrono::{DateTime, Utc};
 use gray_matter::engine::YAML;
 use gray_matter::Matter;
 use regex::Regex;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_yaml::{Mapping, Value};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,6 +122,13 @@ pub enum ParseError {
     MissingField(&'static str),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrontmatterAction {
+    AlreadyComplete,
+    InferredAndRewritten,
+    InferredInMemoryOnly,
+}
+
 #[derive(Debug, Deserialize)]
 struct RawFrontmatter {
     id: Option<String>,
@@ -133,6 +144,19 @@ struct RawFrontmatter {
     tags: Vec<String>,
     #[serde(default)]
     refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PartialFrontmatter {
+    id: Option<String>,
+    region: Option<String>,
+    source: Option<NoteSource>,
+    privacy: Option<Privacy>,
+    created: Option<DateTime<Utc>>,
+    updated: Option<DateTime<Utc>>,
+    summary: Option<String>,
+    tags: Option<Vec<String>>,
+    refs: Option<Vec<String>>,
 }
 
 impl TryFrom<RawFrontmatter> for Frontmatter {
@@ -179,10 +203,93 @@ impl TryFrom<RawFrontmatter> for Frontmatter {
 }
 
 pub fn parse(path: &Path) -> Result<Note, ParseError> {
-    let source = std::fs::read_to_string(path)?;
+    let source = fs::read_to_string(path)?;
+    parse_from_source(path, &source)
+}
+
+pub fn parse_or_infer(
+    path: &Path,
+    vault_root: &Path,
+) -> Result<(Note, FrontmatterAction), ParseError> {
+    parse_or_infer_impl(path, vault_root, true)
+}
+
+pub fn parse_or_infer_in_memory(
+    path: &Path,
+    vault_root: &Path,
+) -> Result<(Note, FrontmatterAction), ParseError> {
+    parse_or_infer_impl(path, vault_root, false)
+}
+
+pub fn rewrite_with_frontmatter(
+    path: &Path,
+    frontmatter: &Frontmatter,
+    original_body: &str,
+) -> Result<(), ParseError> {
+    let serialized = serde_yaml::to_string(frontmatter)
+        .map_err(|err| ParseError::InvalidFrontmatter(err.to_string()))?;
+    let new_content = format!("---\n{serialized}---\n{original_body}");
+
+    let parent = path.parent().ok_or_else(|| {
+        ParseError::InvalidFrontmatter("note path has no parent directory".to_string())
+    })?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(new_content.as_bytes())?;
+    temp.flush()?;
+    temp.as_file().sync_all()?;
+    fs::rename(temp.path(), path)?;
+    Ok(())
+}
+
+fn parse_or_infer_impl(
+    path: &Path,
+    vault_root: &Path,
+    rewrite: bool,
+) -> Result<(Note, FrontmatterAction), ParseError> {
+    let source = fs::read_to_string(path)?;
+    match parse_from_source(path, &source) {
+        Ok(note) => Ok((note, FrontmatterAction::AlreadyComplete)),
+        Err(ParseError::MissingFrontmatter) | Err(ParseError::MissingField(_)) => {
+            let (existing_partial, original_body) = extract_partial_and_body(&source)?;
+            let inferred =
+                infer_frontmatter(path, vault_root, &original_body, existing_partial.as_ref())?;
+            if rewrite {
+                rewrite_with_frontmatter(path, &inferred, &original_body)?;
+            }
+            let wikilinks = extract_wikilinks(&original_body)?;
+            let action = if rewrite {
+                FrontmatterAction::InferredAndRewritten
+            } else {
+                FrontmatterAction::InferredInMemoryOnly
+            };
+            Ok((
+                Note {
+                    path: path.to_path_buf(),
+                    fm: inferred,
+                    body: original_body,
+                    wikilinks,
+                },
+                action,
+            ))
+        }
+        Err(err @ ParseError::InvalidFrontmatter(_)) | Err(err @ ParseError::Io(_)) => Err(err),
+    }
+}
+
+fn parse_from_source(path: &Path, source: &str) -> Result<Note, ParseError> {
     let matter = Matter::<YAML>::new();
-    let parsed = matter.parse(&source);
-    let data = parsed.data.ok_or(ParseError::MissingFrontmatter)?;
+    let parsed = matter.parse(source);
+    let data = match parsed.data {
+        Some(data) => data,
+        None => {
+            if starts_with_frontmatter_delimiter(source) {
+                return Err(ParseError::InvalidFrontmatter(
+                    "malformed YAML frontmatter".to_string(),
+                ));
+            }
+            return Err(ParseError::MissingFrontmatter);
+        }
+    };
     let raw: RawFrontmatter = data
         .deserialize()
         .map_err(|err| ParseError::InvalidFrontmatter(err.to_string()))?;
@@ -195,6 +302,63 @@ pub fn parse(path: &Path) -> Result<Note, ParseError> {
         fm,
         body,
         wikilinks,
+    })
+}
+
+fn infer_frontmatter(
+    path: &Path,
+    vault_root: &Path,
+    body_for_summary: &str,
+    existing_partial: Option<&PartialFrontmatter>,
+) -> Result<Frontmatter, ParseError> {
+    let metadata = fs::metadata(path)?;
+
+    let id = match existing_partial.and_then(|partial| partial.id.clone()) {
+        Some(value) => value,
+        None => infer_unique_id(path, vault_root)?,
+    };
+    let region = match existing_partial.and_then(|partial| partial.region.clone()) {
+        Some(value) => value,
+        None => infer_region(path, vault_root)?,
+    };
+    let created = match existing_partial.and_then(|partial| partial.created) {
+        Some(value) => value,
+        None => {
+            let created_time = metadata.created().or_else(|_| metadata.modified())?;
+            DateTime::<Utc>::from(created_time)
+        }
+    };
+    let updated = match existing_partial.and_then(|partial| partial.updated) {
+        Some(value) => value,
+        None => DateTime::<Utc>::from(metadata.modified()?),
+    };
+    let summary = match existing_partial.and_then(|partial| partial.summary.clone()) {
+        Some(value) => value,
+        None => infer_summary(body_for_summary),
+    };
+    let source = existing_partial
+        .and_then(|partial| partial.source)
+        .unwrap_or(NoteSource::Personal);
+    let privacy = existing_partial
+        .and_then(|partial| partial.privacy)
+        .unwrap_or(Privacy::Private);
+    let tags = existing_partial
+        .and_then(|partial| partial.tags.clone())
+        .unwrap_or_default();
+    let refs = existing_partial
+        .and_then(|partial| partial.refs.clone())
+        .unwrap_or_default();
+
+    Ok(Frontmatter {
+        id,
+        region,
+        source,
+        privacy,
+        created,
+        updated,
+        summary,
+        tags,
+        refs,
     })
 }
 
@@ -227,13 +391,219 @@ fn extract_wikilinks(body: &str) -> Result<Vec<String>, ParseError> {
     Ok(ordered)
 }
 
+fn extract_partial_and_body(
+    source: &str,
+) -> Result<(Option<PartialFrontmatter>, String), ParseError> {
+    let Some((yaml, body)) = split_frontmatter_block(source)? else {
+        return Ok((None, source.to_string()));
+    };
+    let yaml_value: Value = serde_yaml::from_str(&yaml)
+        .map_err(|err| ParseError::InvalidFrontmatter(err.to_string()))?;
+    let partial = parse_partial_frontmatter(&yaml_value)?;
+    Ok((Some(partial), body))
+}
+
+fn parse_partial_frontmatter(value: &Value) -> Result<PartialFrontmatter, ParseError> {
+    let map = value.as_mapping().ok_or_else(|| {
+        ParseError::InvalidFrontmatter("frontmatter must be a YAML mapping".to_string())
+    })?;
+
+    Ok(PartialFrontmatter {
+        id: deserialize_optional_field(map, "id")?,
+        region: deserialize_optional_field(map, "region")?,
+        source: deserialize_optional_field(map, "source")?,
+        privacy: deserialize_optional_field(map, "privacy")?,
+        created: deserialize_optional_field(map, "created")?,
+        updated: deserialize_optional_field(map, "updated")?,
+        summary: deserialize_optional_field(map, "summary")?,
+        tags: deserialize_optional_field(map, "tags")?,
+        refs: deserialize_optional_field(map, "refs")?,
+    })
+}
+
+fn deserialize_optional_field<T>(map: &Mapping, key: &'static str) -> Result<Option<T>, ParseError>
+where
+    T: DeserializeOwned,
+{
+    let lookup = Value::String(key.to_string());
+    match map.get(&lookup) {
+        Some(raw) => serde_yaml::from_value(raw.clone())
+            .map(Some)
+            .map_err(|err| ParseError::InvalidFrontmatter(format!("invalid field `{key}`: {err}"))),
+        None => Ok(None),
+    }
+}
+
+fn split_frontmatter_block(source: &str) -> Result<Option<(String, String)>, ParseError> {
+    if !starts_with_frontmatter_delimiter(source) {
+        return Ok(None);
+    }
+
+    let mut cursor = 0usize;
+    let Some((first_line, next_cursor)) = next_line(source, cursor) else {
+        return Ok(None);
+    };
+    if first_line != "---" {
+        return Ok(None);
+    }
+    cursor = next_cursor;
+    let yaml_start = cursor;
+
+    while let Some((line, next)) = next_line(source, cursor) {
+        if line == "---" {
+            let yaml = source[yaml_start..cursor].to_string();
+            let body = source[next..].to_string();
+            return Ok(Some((yaml, body)));
+        }
+        cursor = next;
+    }
+
+    Err(ParseError::InvalidFrontmatter(
+        "malformed YAML frontmatter".to_string(),
+    ))
+}
+
+fn next_line(source: &str, start: usize) -> Option<(&str, usize)> {
+    if start >= source.len() {
+        return None;
+    }
+    let remaining = &source[start..];
+    match remaining.find('\n') {
+        Some(relative_idx) => {
+            let mut line = &remaining[..relative_idx];
+            if let Some(stripped) = line.strip_suffix('\r') {
+                line = stripped;
+            }
+            Some((line, start + relative_idx + 1))
+        }
+        None => {
+            let mut line = remaining;
+            if let Some(stripped) = line.strip_suffix('\r') {
+                line = stripped;
+            }
+            Some((line, source.len()))
+        }
+    }
+}
+
+fn starts_with_frontmatter_delimiter(source: &str) -> bool {
+    source.starts_with("---\n") || source.starts_with("---\r\n")
+}
+
+fn infer_region(path: &Path, vault_root: &Path) -> Result<String, ParseError> {
+    let parent = path.parent().ok_or_else(|| {
+        ParseError::InvalidFrontmatter("note path has no parent directory".to_string())
+    })?;
+    let relative = parent.strip_prefix(vault_root).map_err(|_| {
+        ParseError::InvalidFrontmatter(format!(
+            "note path `{}` is outside vault root `{}`",
+            path.display(),
+            vault_root.display()
+        ))
+    })?;
+    if relative.as_os_str().is_empty() {
+        return Ok("default".to_string());
+    }
+    let normalized = relative
+        .iter()
+        .map(|segment| segment.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join("/");
+    Ok(normalized)
+}
+
+fn infer_unique_id(path: &Path, vault_root: &Path) -> Result<String, ParseError> {
+    let file_stem = path.file_stem().ok_or_else(|| {
+        ParseError::InvalidFrontmatter(format!("cannot infer id from path `{}`", path.display()))
+    })?;
+    let base_slug = slugify(&file_stem.to_string_lossy());
+    let base_slug = if base_slug.is_empty() {
+        "note".to_string()
+    } else {
+        base_slug
+    };
+
+    let mut collisions = collect_slug_collisions(vault_root, &base_slug)?;
+    collisions.sort();
+    let position = collisions
+        .iter()
+        .position(|candidate| candidate == path)
+        .unwrap_or(0);
+    if position == 0 {
+        Ok(base_slug)
+    } else {
+        Ok(format!("{base_slug}-{}", position + 1))
+    }
+}
+
+fn collect_slug_collisions(vault_root: &Path, base_slug: &str) -> Result<Vec<PathBuf>, ParseError> {
+    let mut stack = vec![vault_root.to_path_buf()];
+    let mut matching = Vec::new();
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            let entry_path = entry.path();
+            if entry.file_type()?.is_dir() {
+                stack.push(entry_path);
+                continue;
+            }
+            if entry_path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+                continue;
+            }
+            let Some(stem) = entry_path.file_stem() else {
+                continue;
+            };
+            if slugify(&stem.to_string_lossy()) == base_slug {
+                matching.push(entry_path);
+            }
+        }
+    }
+    Ok(matching)
+}
+
+fn slugify(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut last_was_dash = false;
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_was_dash = false;
+        } else if !last_was_dash {
+            out.push('-');
+            last_was_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn infer_summary(body_for_summary: &str) -> String {
+    let first_non_empty = body_for_summary
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("(no summary)");
+    truncate_with_ellipsis(first_non_empty, 500)
+}
+
+fn truncate_with_ellipsis(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+    if max_chars <= 3 {
+        return ".".repeat(max_chars);
+    }
+    let head: String = input.chars().take(max_chars - 3).collect();
+    format!("{head}...")
+}
+
 #[cfg(test)]
 mod tests {
     use std::cmp::Ordering;
+    use std::fs;
     use std::io::Write;
     use std::str::FromStr;
 
-    use tempfile::NamedTempFile;
+    use tempfile::{tempdir, NamedTempFile};
 
     use super::*;
 
@@ -342,5 +712,197 @@ Body text with [[Atlas]].
         let second = write_temp(&rendered);
         let reparsed = parse(second.path()).expect("rendered parse should succeed");
         assert_eq!(parsed.fm, reparsed.fm);
+    }
+
+    #[test]
+    fn parse_or_infer_succeeds_on_complete_frontmatter() {
+        let note_text = r#"---
+id: complete-note
+region: work
+source: personal
+privacy: private
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-02T00:00:00Z
+summary: "Already complete."
+tags: []
+refs: []
+---
+body
+"#;
+        let file = write_temp(note_text);
+        let vault_root = file.path().parent().expect("temp note should have parent");
+
+        let (parsed, action) = parse_or_infer_impl(file.path(), vault_root, false)
+            .expect("parse_or_infer should succeed");
+        assert_eq!(action, FrontmatterAction::AlreadyComplete);
+        assert_eq!(parsed.fm.id, "complete-note");
+    }
+
+    #[test]
+    fn parse_or_infer_infers_id_from_filename_when_missing() {
+        let temp = tempdir().expect("create tempdir");
+        let vault_root = temp.path().join("vault");
+        fs::create_dir_all(&vault_root).expect("create vault");
+        let path = vault_root.join("Project Roadmap Q1.md");
+        fs::write(
+            &path,
+            r#"---
+region: work
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Roadmap"
+---
+Body
+"#,
+        )
+        .expect("write note");
+
+        let (parsed, action) =
+            parse_or_infer_impl(&path, &vault_root, false).expect("parse_or_infer should succeed");
+        assert_eq!(action, FrontmatterAction::InferredInMemoryOnly);
+        assert_eq!(parsed.fm.id, "project-roadmap-q1");
+    }
+
+    #[test]
+    fn parse_or_infer_infers_region_from_folder_path() {
+        let temp = tempdir().expect("create tempdir");
+        let vault_root = temp.path().join("vault");
+        let note_path = vault_root.join("work/internorga/q1.md");
+        fs::create_dir_all(note_path.parent().expect("note should have parent"))
+            .expect("create folders");
+        fs::write(
+            &note_path,
+            r#"---
+id: q1
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Q1 note"
+---
+Body
+"#,
+        )
+        .expect("write note");
+
+        let (parsed, _) = parse_or_infer_impl(&note_path, &vault_root, false)
+            .expect("parse_or_infer should succeed");
+        assert_eq!(parsed.fm.region, "work/internorga");
+    }
+
+    #[test]
+    fn parse_or_infer_infers_summary_from_first_body_line() {
+        let temp = tempdir().expect("create tempdir");
+        let vault_root = temp.path().join("vault");
+        fs::create_dir_all(&vault_root).expect("create vault");
+        let path = vault_root.join("daily.md");
+        fs::write(
+            &path,
+            r#"---
+id: daily
+region: default
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+---
+
+  First useful summary line  
+Second line
+"#,
+        )
+        .expect("write note");
+
+        let (parsed, _) =
+            parse_or_infer_impl(&path, &vault_root, false).expect("parse_or_infer should succeed");
+        assert_eq!(parsed.fm.summary, "First useful summary line");
+    }
+
+    #[test]
+    fn parse_or_infer_preserves_existing_partial_fields() {
+        let temp = tempdir().expect("create tempdir");
+        let vault_root = temp.path().join("vault");
+        fs::create_dir_all(&vault_root).expect("create vault");
+        let path = vault_root.join("tagged.md");
+        fs::write(
+            &path,
+            r#"---
+region: default
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Has tags"
+tags: [foo, bar]
+---
+Body
+"#,
+        )
+        .expect("write note");
+
+        let (parsed, _) =
+            parse_or_infer_impl(&path, &vault_root, false).expect("parse_or_infer should succeed");
+        assert_eq!(parsed.fm.tags, vec!["foo".to_string(), "bar".to_string()]);
+        assert_eq!(parsed.fm.id, "tagged");
+    }
+
+    #[test]
+    fn parse_or_infer_returns_err_on_malformed_yaml() {
+        let temp = tempdir().expect("create tempdir");
+        let vault_root = temp.path().join("vault");
+        fs::create_dir_all(&vault_root).expect("create vault");
+        let path = vault_root.join("broken.md");
+        fs::write(
+            &path,
+            "---\nid: [\nregion: default\ncreated: 2026-04-01T00:00:00Z\nupdated: 2026-04-01T00:00:00Z\nsummary: bad\n---\nbody\n",
+        )
+        .expect("write note");
+
+        let err = parse_or_infer(&path, &vault_root).expect_err("malformed yaml should fail");
+        assert!(matches!(err, ParseError::InvalidFrontmatter(_)));
+    }
+
+    #[test]
+    fn rewrite_with_frontmatter_atomically_replaces_file() {
+        let temp = tempdir().expect("create tempdir");
+        let vault_root = temp.path().join("vault");
+        fs::create_dir_all(&vault_root).expect("create vault");
+        let path = vault_root.join("note.md");
+        let body = "\n# Title\nBody line\n";
+        fs::write(&path, body).expect("write body");
+
+        let frontmatter = Frontmatter {
+            id: "note".to_string(),
+            region: "default".to_string(),
+            source: NoteSource::Personal,
+            privacy: Privacy::Private,
+            created: DateTime::from_str("2026-04-01T00:00:00Z").expect("valid datetime"),
+            updated: DateTime::from_str("2026-04-01T00:00:00Z").expect("valid datetime"),
+            summary: "Summary".to_string(),
+            tags: vec![],
+            refs: vec![],
+        };
+
+        rewrite_with_frontmatter(&path, &frontmatter, body).expect("rewrite should succeed");
+        let rewritten = fs::read_to_string(&path).expect("read rewritten note");
+        assert!(rewritten.starts_with("---\n"));
+        assert!(rewritten.ends_with(body));
+    }
+
+    #[test]
+    fn parse_or_infer_handles_id_collision() {
+        let temp = tempdir().expect("create tempdir");
+        let vault_root = temp.path().join("vault");
+        fs::create_dir_all(vault_root.join("a")).expect("create folder a");
+        fs::create_dir_all(vault_root.join("b")).expect("create folder b");
+        let first = vault_root.join("a/Project Idea.md");
+        let second = vault_root.join("b/Project Idea.md");
+        fs::write(&first, body_only_note()).expect("write first note");
+        fs::write(&second, body_only_note()).expect("write second note");
+
+        let (first_note, _) =
+            parse_or_infer_impl(&first, &vault_root, false).expect("first infer should succeed");
+        let (second_note, _) =
+            parse_or_infer_impl(&second, &vault_root, false).expect("second infer should succeed");
+        assert_eq!(first_note.fm.id, "project-idea");
+        assert_eq!(second_note.fm.id, "project-idea-2");
+    }
+
+    fn body_only_note() -> &'static str {
+        "First summary line\n\nMore details.\n"
     }
 }
