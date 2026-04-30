@@ -98,8 +98,9 @@ impl<'a> Indexer<'a> {
 
     pub async fn handle_event(&self, ev: VaultEvent) -> Result<()> {
         match ev {
-            VaultEvent::Modified(path) | VaultEvent::Created(path) => {
+            VaultEvent::Modified(path) | VaultEvent::Created(path) | VaultEvent::Renamed(path) => {
                 let parsed = self.parse_note_for_indexing(&path)?;
+                let parsed = self.rewrite_region_if_moved(path.as_path(), parsed)?;
                 self.upsert_note(&parsed).await?;
             }
             VaultEvent::Deleted(path) => {
@@ -113,6 +114,27 @@ impl<'a> Indexer<'a> {
             }
         }
         Ok(())
+    }
+
+    fn rewrite_region_if_moved(
+        &self,
+        path: &std::path::Path,
+        mut parsed: crate::note::Note,
+    ) -> Result<crate::note::Note> {
+        let expected_region = note::derive_region_from_path(path, self.vault.root());
+        if parsed.fm.region == expected_region {
+            return Ok(parsed);
+        }
+
+        tracing::info!(
+            path = %path.display(),
+            old_region = %parsed.fm.region,
+            new_region = %expected_region,
+            "updating note region to match folder path"
+        );
+        parsed.fm.region = expected_region;
+        note::rewrite_with_frontmatter(path, &parsed.fm, &parsed.body)?;
+        self.parse_note_for_indexing(path)
     }
 
     fn parse_note_for_indexing(&self, path: &std::path::Path) -> Result<crate::note::Note> {

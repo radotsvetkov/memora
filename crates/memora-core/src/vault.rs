@@ -38,6 +38,7 @@ pub fn scan(root: &Path) -> impl Iterator<Item = PathBuf> {
 pub enum VaultEvent {
     Created(PathBuf),
     Modified(PathBuf),
+    Renamed(PathBuf),
     Deleted(PathBuf),
 }
 
@@ -59,6 +60,15 @@ pub fn watch(root: &Path) -> Result<(RecommendedWatcher, Receiver<VaultEvent>), 
                 }
             };
 
+            if let EventKind::Modify(ModifyKind::Name(_)) = event.kind {
+                for path in event.paths {
+                    if is_watchable_markdown(&path) {
+                        let _ = tx.send(VaultEvent::Renamed(path));
+                    }
+                }
+                return;
+            }
+
             let event_factory = classify_event_kind(&event.kind);
             if let Some(factory) = event_factory {
                 for path in event.paths {
@@ -77,11 +87,10 @@ fn classify_event_kind(kind: &EventKind) -> Option<fn(PathBuf) -> VaultEvent> {
     match kind {
         EventKind::Create(_) => Some(VaultEvent::Created),
         EventKind::Modify(modify_kind) => match modify_kind {
-            ModifyKind::Data(_)
-            | ModifyKind::Name(_)
-            | ModifyKind::Metadata(_)
-            | ModifyKind::Any
-            | ModifyKind::Other => Some(VaultEvent::Modified),
+            ModifyKind::Data(_) | ModifyKind::Metadata(_) | ModifyKind::Any | ModifyKind::Other => {
+                Some(VaultEvent::Modified)
+            }
+            ModifyKind::Name(_) => None,
         },
         EventKind::Remove(_) => Some(VaultEvent::Deleted),
         _ => None,

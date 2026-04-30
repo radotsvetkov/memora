@@ -1,11 +1,14 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use memora_core::claims::{Claim, ClaimStore};
+use memora_core::indexer::Indexer;
 use memora_core::note::{Frontmatter, Note, NoteSource, Privacy};
-use memora_core::Index;
+use memora_core::{Embedder, Index, Vault, VaultEvent, VectorIndex};
 use memora_mcp::tools::MemoraRuntime;
 use tempfile::tempdir;
 
@@ -55,6 +58,23 @@ fn seed_note(vault: &std::path::Path, index: &Index) -> Result<String> {
     };
     ClaimStore::new(index).upsert(&claim)?;
     Ok(note.fm.id)
+}
+
+struct TestEmbedder;
+
+#[async_trait]
+impl Embedder for TestEmbedder {
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        Ok(texts.iter().map(|_| vec![0.25; 64]).collect())
+    }
+
+    fn dim(&self) -> usize {
+        64
+    }
+
+    fn model_id(&self) -> &str {
+        "test/embedder"
+    }
 }
 
 #[tokio::test]
@@ -121,5 +141,96 @@ async fn mcp_runtime_e2e_tools() -> Result<()> {
     assert!(challenge.get("contradiction_alerts").is_some());
     assert!(challenge.get("cross_region_alerts").is_some());
     assert!(challenge.get("frontier_alerts").is_some());
+    Ok(())
+}
+
+#[tokio::test]
+async fn moved_note_updates_region_in_frontmatter_index_and_query() -> Result<()> {
+    let temp = tempdir()?;
+    let vault_root = temp.path().join("vault");
+    fs::create_dir_all(&vault_root)?;
+    let index_db = vault_root.join(".memora").join("memora.db");
+    let vector_index_path = vault_root.join(".memora").join("vectors");
+    fs::create_dir_all(vault_root.join(".memora"))?;
+
+    let index = Index::open(&index_db)?;
+    let vault = Vault::new(&vault_root);
+    let embedder: Arc<dyn Embedder> = Arc::new(TestEmbedder);
+    let vector_index = Arc::new(Mutex::new(VectorIndex::open_or_create(
+        &vector_index_path,
+        embedder.dim(),
+    )?));
+    let indexer = Indexer::new(&vault, &index, embedder, vector_index);
+
+    let root_note_path = vault_root.join("moved-note.md");
+    let initial = r#"---
+id: moved-note
+region: default
+source: personal
+privacy: private
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Move test note"
+tags: []
+refs: []
+---
+relocation-token appears in this note body.
+"#;
+    fs::write(&root_note_path, initial)?;
+    indexer
+        .handle_event(VaultEvent::Created(root_note_path.clone()))
+        .await?;
+    assert_eq!(
+        index
+            .get_note("moved-note")?
+            .expect("note should be indexed")
+            .region,
+        "default"
+    );
+
+    let moved_path = vault_root.join("work").join("moved-note.md");
+    fs::create_dir_all(moved_path.parent().expect("moved path should have parent"))?;
+    fs::rename(&root_note_path, &moved_path)?;
+    indexer
+        .handle_event(VaultEvent::Renamed(moved_path.clone()))
+        .await?;
+
+    let reparsed = memora_core::note::parse(&moved_path)?;
+    assert_eq!(reparsed.fm.region, "work");
+    assert_eq!(
+        index
+            .get_note("moved-note")?
+            .expect("moved note should be indexed")
+            .region,
+        "work"
+    );
+
+    let runtime = MemoraRuntime {
+        vault_root: vault_root.clone(),
+        index_db,
+        vector_index: vector_index_path,
+    };
+    let query = runtime
+        .invoke_tool(
+            "memora_query",
+            serde_json::json!({"query":"relocation-token", "k":5}),
+        )
+        .await?;
+    let hits = query
+        .get("hits")
+        .and_then(serde_json::Value::as_array)
+        .expect("hits should be an array");
+    let moved_hit = hits
+        .iter()
+        .find(|hit| hit.get("id").and_then(serde_json::Value::as_str) == Some("moved-note"))
+        .expect("moved note should be queryable");
+    assert_eq!(
+        moved_hit
+            .get("region")
+            .and_then(serde_json::Value::as_str)
+            .expect("region should be present"),
+        "work"
+    );
+
     Ok(())
 }

@@ -4,6 +4,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
 use gray_matter::engine::YAML;
@@ -325,12 +326,12 @@ fn infer_frontmatter(
         Some(value) => value,
         None => {
             let created_time = metadata.created().or_else(|_| metadata.modified())?;
-            DateTime::<Utc>::from(created_time)
+            datetime_from_system_time_secs(created_time)?
         }
     };
     let updated = match existing_partial.and_then(|partial| partial.updated) {
         Some(value) => value,
-        None => DateTime::<Utc>::from(metadata.modified()?),
+        None => datetime_from_system_time_secs(metadata.modified()?)?,
     };
     let summary = match existing_partial.and_then(|partial| partial.summary.clone()) {
         Some(value) => value,
@@ -491,25 +492,42 @@ fn starts_with_frontmatter_delimiter(source: &str) -> bool {
 }
 
 fn infer_region(path: &Path, vault_root: &Path) -> Result<String, ParseError> {
-    let parent = path.parent().ok_or_else(|| {
-        ParseError::InvalidFrontmatter("note path has no parent directory".to_string())
-    })?;
-    let relative = parent.strip_prefix(vault_root).map_err(|_| {
-        ParseError::InvalidFrontmatter(format!(
+    if path.parent().is_none() {
+        return Err(ParseError::InvalidFrontmatter(
+            "note path has no parent directory".to_string(),
+        ));
+    }
+    if !path.starts_with(vault_root) {
+        return Err(ParseError::InvalidFrontmatter(format!(
             "note path `{}` is outside vault root `{}`",
             path.display(),
             vault_root.display()
-        ))
-    })?;
-    if relative.as_os_str().is_empty() {
-        return Ok("default".to_string());
+        )));
     }
-    let normalized = relative
-        .iter()
-        .map(|segment| segment.to_string_lossy().to_string())
-        .collect::<Vec<_>>()
-        .join("/");
-    Ok(normalized)
+    Ok(derive_region_from_path(path, vault_root))
+}
+
+/// Derive a note region from its folder path relative to the vault root.
+pub fn derive_region_from_path(path: &Path, vault_root: &Path) -> String {
+    let rel = path.strip_prefix(vault_root).unwrap_or(path);
+    let parent = rel.parent();
+    match parent {
+        Some(p) if !p.as_os_str().is_empty() => p
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("/"),
+        _ => "default".to_string(),
+    }
+}
+
+fn datetime_from_system_time_secs(system_time: SystemTime) -> Result<DateTime<Utc>, ParseError> {
+    let seconds = system_time
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| ParseError::InvalidFrontmatter(format!("invalid timestamp: {err}")))?
+        .as_secs();
+    DateTime::<Utc>::from_timestamp(seconds as i64, 0)
+        .ok_or_else(|| ParseError::InvalidFrontmatter("invalid timestamp".to_string()))
 }
 
 fn infer_unique_id(path: &Path, vault_root: &Path) -> Result<String, ParseError> {
@@ -786,6 +804,47 @@ Body
         let (parsed, _) = parse_or_infer_impl(&note_path, &vault_root, false)
             .expect("parse_or_infer should succeed");
         assert_eq!(parsed.fm.region, "work/internorga");
+    }
+
+    #[test]
+    fn derive_region_from_path_uses_parent_relative_to_vault_root() {
+        let vault_root = Path::new("/vault");
+        assert_eq!(
+            derive_region_from_path(Path::new("/vault/work/sub/note.md"), vault_root),
+            "work/sub"
+        );
+        assert_eq!(
+            derive_region_from_path(Path::new("/vault/note.md"), vault_root),
+            "default"
+        );
+    }
+
+    #[test]
+    fn infer_frontmatter_rewrite_serializes_second_precision_timestamps() {
+        let temp = tempdir().expect("create tempdir");
+        let vault_root = temp.path().join("vault");
+        fs::create_dir_all(&vault_root).expect("create vault");
+        let path = vault_root.join("fresh.md");
+        let body = "Fresh note body.\n";
+        fs::write(&path, body).expect("write note body");
+
+        let inferred =
+            infer_frontmatter(&path, &vault_root, body, None).expect("infer frontmatter");
+        rewrite_with_frontmatter(&path, &inferred, body)
+            .expect("rewrite with inferred frontmatter");
+
+        let rewritten = fs::read_to_string(&path).expect("read rewritten note");
+        let created_line = rewritten
+            .lines()
+            .find(|line| line.starts_with("created: "))
+            .expect("created line should exist");
+        let created_value = created_line.trim_start_matches("created: ").trim();
+
+        assert!(!created_value.contains('.'));
+        assert!(created_value.ends_with('Z'));
+        assert!(Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+            .expect("valid regex")
+            .is_match(created_value));
     }
 
     #[test]
