@@ -52,11 +52,10 @@ pub async fn run(args: WatchArgs) -> Result<()> {
         stop_for_signal.store(true, Ordering::SeqCst);
     });
 
-    let handle = tokio::runtime::Handle::current();
     while !stop.load(Ordering::SeqCst) {
         match rx.recv_timeout(Duration::from_secs(1)) {
             Ok(event) => {
-                handle.block_on(indexer.handle_event(event))?;
+                indexer.handle_event(event).await?;
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,

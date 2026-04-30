@@ -31,3 +31,8 @@
 ### Fixed
 - Add heuristic claim-extraction fallback when local models return malformed JSON or extraction calls fail, so indexing still produces claims.
 - Add extractive citation-backed answer fallback when the model returns uncited generic chat output despite available claims.
+
+## [0.1.9] - 2026-04-30
+
+### Fixed
+- Fix `memora watch` runtime panic by removing nested Tokio `block_on` usage and awaiting vault events directly inside the async command loop.
