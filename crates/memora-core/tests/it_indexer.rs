@@ -240,3 +240,65 @@ async fn it_indexer_auto_fixes_real_obsidian_style_vault() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn full_rebuild_updates_region_after_file_move() -> Result<()> {
+    let temp = tempdir()?;
+    let vault_root = temp.path().join("vault");
+    fs::create_dir_all(&vault_root)?;
+
+    let moved_note = vault_root.join("move-me.md");
+    fs::write(
+        &moved_note,
+        r#"---
+id: move-me
+region: default
+source: personal
+privacy: private
+created: 2026-04-01T00:00:00Z
+updated: 2026-04-01T00:00:00Z
+summary: "Move me"
+tags: []
+refs: []
+---
+Body text for move.
+"#,
+    )?;
+
+    let index_path = temp.path().join("index").join("memora.db");
+    let index = Index::open(&index_path)?;
+    let vault = Vault::new(&vault_root);
+    let embedder: Arc<dyn Embedder> = Arc::new(DeterministicEmbedder::new(64));
+    let vector_index = Arc::new(Mutex::new(VectorIndex::open_or_create(
+        &temp.path().join("index").join("vectors"),
+        embedder.dim(),
+    )?));
+    let indexer = Indexer::new(&vault, &index, embedder, vector_index);
+
+    indexer.full_rebuild().await?;
+    assert_eq!(
+        index
+            .get_note("move-me")?
+            .expect("note should be indexed")
+            .region,
+        "default"
+    );
+
+    let moved_path = vault_root.join("work").join("move-me.md");
+    fs::create_dir_all(moved_path.parent().expect("moved note should have parent"))?;
+    fs::rename(&moved_note, &moved_path)?;
+
+    indexer.full_rebuild().await?;
+
+    let reparsed = note::parse(&moved_path)?;
+    assert_eq!(reparsed.fm.region, "work");
+    assert_eq!(
+        index
+            .get_note("move-me")?
+            .expect("moved note should remain indexed")
+            .region,
+        "work"
+    );
+
+    Ok(())
+}

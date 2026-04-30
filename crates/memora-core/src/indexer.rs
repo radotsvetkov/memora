@@ -74,6 +74,19 @@ impl<'a> Indexer<'a> {
         for path in scan(self.vault.root()) {
             match self.parse_note_for_indexing(&path) {
                 Ok(parsed) => {
+                    let parsed = match self.rewrite_region_if_moved(path.as_path(), parsed) {
+                        Ok(parsed) => parsed,
+                        Err(err) => {
+                            stats.skipped += 1;
+                            stats.errors += 1;
+                            tracing::warn!(
+                                path = %path.display(),
+                                error = %err,
+                                "failed to align note region during rebuild"
+                            );
+                            continue;
+                        }
+                    };
                     if let Err(err) = self.upsert_note(&parsed).await {
                         stats.errors += 1;
                         tracing::warn!(path = %path.display(), error = %err, "failed to upsert parsed note");

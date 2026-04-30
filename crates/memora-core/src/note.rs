@@ -227,7 +227,18 @@ pub fn rewrite_with_frontmatter(
     frontmatter: &Frontmatter,
     original_body: &str,
 ) -> Result<(), ParseError> {
-    let serialized = serde_yaml::to_string(frontmatter)
+    let normalized_frontmatter = Frontmatter {
+        id: frontmatter.id.clone(),
+        region: frontmatter.region.clone(),
+        source: frontmatter.source,
+        privacy: frontmatter.privacy,
+        created: truncate_datetime_to_seconds(frontmatter.created),
+        updated: truncate_datetime_to_seconds(frontmatter.updated),
+        summary: frontmatter.summary.clone(),
+        tags: frontmatter.tags.clone(),
+        refs: frontmatter.refs.clone(),
+    };
+    let serialized = serde_yaml::to_string(&normalized_frontmatter)
         .map_err(|err| ParseError::InvalidFrontmatter(err.to_string()))?;
     let new_content = format!("---\n{serialized}---\n{original_body}");
 
@@ -364,7 +375,18 @@ fn infer_frontmatter(
 }
 
 pub fn render(note: &Note) -> String {
-    let frontmatter = match serde_yaml::to_string(&note.fm) {
+    let normalized_frontmatter = Frontmatter {
+        id: note.fm.id.clone(),
+        region: note.fm.region.clone(),
+        source: note.fm.source,
+        privacy: note.fm.privacy,
+        created: truncate_datetime_to_seconds(note.fm.created),
+        updated: truncate_datetime_to_seconds(note.fm.updated),
+        summary: note.fm.summary.clone(),
+        tags: note.fm.tags.clone(),
+        refs: note.fm.refs.clone(),
+    };
+    let frontmatter = match serde_yaml::to_string(&normalized_frontmatter) {
         Ok(serialized) => serialized.trim_end().to_string(),
         Err(err) => {
             tracing::error!(error = %err, path = %note.path.display(), "failed to serialize frontmatter");
@@ -528,6 +550,10 @@ fn datetime_from_system_time_secs(system_time: SystemTime) -> Result<DateTime<Ut
         .as_secs();
     DateTime::<Utc>::from_timestamp(seconds as i64, 0)
         .ok_or_else(|| ParseError::InvalidFrontmatter("invalid timestamp".to_string()))
+}
+
+pub fn truncate_datetime_to_seconds(value: DateTime<Utc>) -> DateTime<Utc> {
+    DateTime::<Utc>::from_timestamp(value.timestamp(), 0).unwrap_or(value)
 }
 
 fn infer_unique_id(path: &Path, vault_root: &Path) -> Result<String, ParseError> {
@@ -940,6 +966,47 @@ Body
         let rewritten = fs::read_to_string(&path).expect("read rewritten note");
         assert!(rewritten.starts_with("---\n"));
         assert!(rewritten.ends_with(body));
+    }
+
+    #[test]
+    fn render_truncates_fractional_timestamp_precision() {
+        let note = Note {
+            path: PathBuf::from("vault/note.md"),
+            fm: Frontmatter {
+                id: "note".to_string(),
+                region: "default".to_string(),
+                source: NoteSource::Personal,
+                privacy: Privacy::Private,
+                created: DateTime::from_timestamp(1_714_504_417, 668_688_826)
+                    .expect("valid created timestamp"),
+                updated: DateTime::from_timestamp(1_714_504_417, 999_999_999)
+                    .expect("valid updated timestamp"),
+                summary: "Summary".to_string(),
+                tags: vec![],
+                refs: vec![],
+            },
+            body: "Body".to_string(),
+            wikilinks: vec![],
+        };
+
+        let rendered = render(&note);
+        let created_line = rendered
+            .lines()
+            .find(|line| line.starts_with("created: "))
+            .expect("created field should be present");
+        let updated_line = rendered
+            .lines()
+            .find(|line| line.starts_with("updated: "))
+            .expect("updated field should be present");
+
+        let created_value = created_line.trim_start_matches("created: ").trim();
+        let updated_value = updated_line.trim_start_matches("updated: ").trim();
+        let ts_pattern =
+            Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$").expect("valid regex");
+        assert!(ts_pattern.is_match(created_value));
+        assert!(ts_pattern.is_match(updated_value));
+        assert!(!created_value.contains('.'));
+        assert!(!updated_value.contains('.'));
     }
 
     #[test]
