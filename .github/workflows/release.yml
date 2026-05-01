@@ -59,11 +59,13 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      # Install dist from crates.io instead of the GitHub Releases installer script.
+      # The installer’s second-stage curl (release .tar.xz) often hits HTTP 504 from GitHub CDN.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.75"
       - name: Install dist
-        # we specify bash to get pipefail; it guards against the `curl` command
-        # failing. otherwise `sh` won't catch that `curl` returned non-0
-        shell: bash
-        run: "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.31.0/cargo-dist-installer.sh | sh"
+        run: cargo install cargo-dist --locked --version 0.31.0
       - name: Cache dist
         uses: actions/upload-artifact@v6
         with:
@@ -119,6 +121,10 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      # Same as plan job: avoid cargo-dist’s GitHub Release tarball download (504-prone).
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.75"
       - name: Install Rust non-interactively if not already installed
         if: ${{ matrix.container }}
         run: |
@@ -127,7 +133,8 @@ jobs:
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
       - name: Install dist
-        run: ${{ matrix.install_dist.run }}
+        shell: bash
+        run: cargo install cargo-dist --locked --version 0.31.0
       # Get the dist-manifest
       - name: Fetch local artifacts
         uses: actions/download-artifact@v7
