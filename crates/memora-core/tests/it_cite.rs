@@ -172,7 +172,7 @@ fn upsert_test_claim(
         id: claim_id.to_string(),
         subject: "Rado".to_string(),
         predicate: "works_at".to_string(),
-        object: "HMC".to_string(),
+        object: Some("HMC".to_string()),
         note_id: fixture.note.fm.id.clone(),
         span_start,
         span_end,

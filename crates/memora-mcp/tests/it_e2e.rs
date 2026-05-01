@@ -44,7 +44,7 @@ fn seed_note(vault: &std::path::Path, index: &Index) -> Result<String> {
         id: "aaaaaaaaaaaaaaaa".to_string(),
         subject: "Rado".to_string(),
         predicate: "works_at".to_string(),
-        object: "HMC".to_string(),
+        object: Some("HMC".to_string()),
         note_id: note.fm.id.clone(),
         span_start: 0,
         span_end: "Rado works at HMC".len(),

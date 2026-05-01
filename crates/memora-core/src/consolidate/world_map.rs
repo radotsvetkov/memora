@@ -263,10 +263,10 @@ mod tests {
             .single()
             .expect("valid datetime");
         Claim {
-            id: Claim::compute_id(subject, "has", object, note_id, span_start),
+            id: Claim::compute_id(subject, "has", Some(object), note_id, span_start),
             subject: subject.to_string(),
             predicate: "has".to_string(),
-            object: object.to_string(),
+            object: Some(object.to_string()),
             note_id: note_id.to_string(),
             span_start,
             span_end: span_start.saturating_add(4),

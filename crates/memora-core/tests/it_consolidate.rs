@@ -61,10 +61,10 @@ fn make_claim(
         .single()
         .expect("valid datetime");
     Claim {
-        id: Claim::compute_id(subject, predicate, object, note_id, 0),
+        id: Claim::compute_id(subject, predicate, Some(object), note_id, 0),
         subject: subject.to_string(),
         predicate: predicate.to_string(),
-        object: object.to_string(),
+        object: Some(object.to_string()),
         note_id: note_id.to_string(),
         span_start: 0,
         span_end: object.len(),

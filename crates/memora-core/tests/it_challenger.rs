@@ -120,10 +120,10 @@ fn seed_claim(
 ) -> Result<Claim> {
     let span_text = format!("{subject} {predicate} {object}");
     let claim = Claim {
-        id: Claim::compute_id(subject, predicate, object, note_id, 0),
+        id: Claim::compute_id(subject, predicate, Some(object), note_id, 0),
         subject: subject.to_string(),
         predicate: predicate.to_string(),
-        object: object.to_string(),
+        object: Some(object.to_string()),
         note_id: note_id.to_string(),
         span_start: 0,
         span_end: span_text.len(),

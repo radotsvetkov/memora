@@ -19,7 +19,7 @@ OUTPUT FORMAT — return only a JSON array (no prose, no markdown):
   {
     "subject": "<entity, lowercase, hyphenated if multi-word>",
     "predicate": "<verb_or_relation, lowercase, snake_case>",
-    "object": "<entity or value, lowercase>",
+    "object": "<OPTIONAL: entity or value, lowercase — omit or null for unary predicates>",
     "span_start": <byte offset where claim source begins>,
     "span_end": <byte offset where claim source ends>,
     "valid_from": "<ISO 8601 datetime or null>",
@@ -27,6 +27,27 @@ OUTPUT FORMAT — return only a JSON array (no prose, no markdown):
     "confidence": <0.0 to 1.0>
   }
 ]
+
+In the array, each claim has these fields:
+- subject (required, non-empty)
+- predicate (required, non-empty, snake_case)
+- object (OPTIONAL — omit or use null for unary predicates that describe a state,
+  like "completed", "active", "deprecated", or "in_early_stages")
+- span_start, span_end: byte offsets into the note body
+- valid_from, valid_until: ISO dates or null
+- confidence: 0.0 to 1.0
+
+EXAMPLES of unary predicates (object omitted):
+- {"subject": "akmon-launch", "predicate": "completed", "span_start": 0, "span_end": 42, "valid_from": null, "valid_until": null, "confidence": 0.9}
+- {"subject": "csv-tool", "predicate": "in_alpha_phase", "span_start": 0, "span_end": 60, "valid_from": null, "valid_until": null, "confidence": 0.85}
+- {"subject": "memora-prompts", "predicate": "deprecated", "span_start": 0, "span_end": 30, "valid_from": null, "valid_until": null, "confidence": 0.8}
+
+EXAMPLES of binary predicates (with object):
+- {"subject": "csv-tool", "predicate": "uses_language", "object": "rust", ...}
+- {"subject": "akmon", "predicate": "depends_on", "object": "openapi-generator", ...}
+
+Rule: if a fact has a clear "what is it about" (object), use binary.
+Otherwise unary. Don't pad with empty strings.
 
 RULES:
 - Return at most 8 claims per call.
@@ -80,10 +101,10 @@ Code fence: ```json
 Prose: "Here are the claims I extracted: [...]"
   (No commentary. JSON only.)
 
-Empty fields: {"subject": "x", "predicate": "is", "object": ""}
-  (If the object would be empty, the claim is not atomic; skip it.)
+Empty object string: {"subject": "x", "predicate": "is", "object": ""}
+  (Use unary form: omit "object" or use null — never an empty string.)
 
-- Never use JSON null for subject, predicate, or object. Omit the claim instead.
+- Never use JSON null for subject or predicate. Omit the claim instead.
 
 Note id: {{NOTE_ID}}
 Note source: {{NOTE_SOURCE}}
@@ -102,6 +123,7 @@ pub(crate) struct LlmClaimRecord {
     pub subject: Option<String>,
     #[serde(default, alias = "p")]
     pub predicate: Option<String>,
+    /// Optional; omit or null for unary predicates. Empty string is normalized away.
     #[serde(default, alias = "o")]
     pub object: Option<String>,
     pub span_start: i64,
@@ -145,18 +167,82 @@ impl ClaimExtractor {
             err
         })?;
 
-        let mut claims = Vec::new();
+        let mut claims = Self::validate_records(note, body, &marker_spans, &records, self);
 
-        for item in records.into_iter().take(8) {
-            match self.build_claim_item(note, body, &marker_spans, &item) {
+        if claims.is_empty() && !records.is_empty() {
+            tracing::info!(
+                path = %note.path.display(),
+                parsed_count = records.len(),
+                "first extraction returned all-invalid claims; retrying with feedback"
+            );
+            let retry_prompt = self.build_retry_prompt(note, body, &records);
+            let retry_text = self
+                .llm
+                .chat_json(&retry_prompt, None, 2_000, 0.05)
+                .await
+                .map_err(|err| {
+                    tracing::warn!(error = %err, "claim extractor retry LLM call failed");
+                    anyhow::Error::from(err)
+                })?;
+
+            let retry_records = parse_extraction_response(&retry_text).map_err(|err| {
+                tracing::warn!(
+                    error = %err,
+                    raw_response = %retry_text,
+                    "claim extractor retry failed to parse JSON response"
+                );
+                err
+            })?;
+
+            claims = Self::validate_records(note, body, &marker_spans, &retry_records, self);
+        }
+
+        Ok(claims)
+    }
+
+    fn validate_records(
+        note: &Note,
+        body: &str,
+        marker_spans: &[(usize, usize, crate::note::Privacy)],
+        records: &[LlmClaimRecord],
+        extractor: &ClaimExtractor,
+    ) -> Vec<Claim> {
+        let mut claims = Vec::new();
+        for item in records.iter().take(8) {
+            match validate_extracted_record(note, body, marker_spans, item, extractor) {
                 Ok(claim) => claims.push(claim),
                 Err(err) => {
                     tracing::warn!(error = %err, ?item, "discarding invalid extracted claim");
                 }
             }
         }
+        claims
+    }
 
-        Ok(claims)
+    fn build_retry_prompt(
+        &self,
+        note: &Note,
+        body: &str,
+        prior_attempt: &[LlmClaimRecord],
+    ) -> String {
+        let base = self.render_prompt(note, body);
+        let n = prior_attempt.len();
+        format!(
+            "{base}\n\
+             \n\
+             --- CORRECTION ---\n\
+             Your previous attempt returned claims with missing or empty \
+             'object' fields, or with invalid spans. Common issues:\n\
+             - object field empty: omit the claim if it's not a binary fact, \
+               or omit the 'object' key for unary predicates\n\
+             - span_end exceeds note length: count bytes carefully or tighten \
+               the span to the sentence that supports the claim\n\
+             - subject not in note body: don't fabricate; only extract \
+               claims explicitly stated\n\
+             \n\
+             Your previous response had {n} items but none passed validation.\n\
+             Try again. Return ONLY a JSON array. No prose."
+        )
     }
 
     fn render_prompt(&self, note: &Note, body: &str) -> String {
@@ -169,68 +255,130 @@ impl ClaimExtractor {
                 &render_body_with_offsets(body),
             )
     }
+}
 
-    fn build_claim_item(
-        &self,
-        note: &Note,
-        body: &str,
-        marker_spans: &[(usize, usize, crate::note::Privacy)],
-        item: &LlmClaimRecord,
-    ) -> Result<Claim> {
-        let subject = non_empty_trimmed(&item.subject, "subject")?;
-        let predicate = non_empty_trimmed(&item.predicate, "predicate")?;
-        let object = non_empty_trimmed(&item.object, "object")?;
-        if subject == "..."
-            || predicate == "..."
-            || object == "..."
-            || subject == "[redacted]"
-            || predicate == "[redacted]"
-            || object == "[redacted]"
-        {
-            return Err(anyhow!("invalid placeholder field value"));
-        }
+fn validate_extracted_record(
+    note: &Note,
+    body: &str,
+    marker_spans: &[(usize, usize, crate::note::Privacy)],
+    item: &LlmClaimRecord,
+    extractor: &ClaimExtractor,
+) -> Result<Claim> {
+    let subject = item
+        .subject
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("missing or empty field: subject"))?;
+    let predicate = item
+        .predicate
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("missing or empty field: predicate"))?;
 
-        let span_start = usize::try_from(item.span_start)
-            .map_err(|_| anyhow!("span_start does not fit usize"))?;
-        let span_end =
-            usize::try_from(item.span_end).map_err(|_| anyhow!("span_end does not fit usize"))?;
+    let object = item
+        .object
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from);
 
-        if span_end <= span_start {
-            return Err(anyhow!("invalid span: span_end must be > span_start"));
-        }
-        if span_end > body.len() {
-            return Err(anyhow!("invalid span: span_end out of bounds"));
-        }
-        let Some(span_text) = body.get(span_start..span_end) else {
-            return Err(anyhow!("invalid span: not on UTF-8 boundary"));
-        };
-        let trimmed_len = span_text.trim().chars().count();
-        if !(5..=300).contains(&trimmed_len) {
-            return Err(anyhow!("invalid span text length: {trimmed_len}"));
-        }
+    let object_for_placeholder = object.as_deref().unwrap_or("");
+    if subject == "..."
+        || predicate == "..."
+        || object_for_placeholder == "..."
+        || subject == "[redacted]"
+        || predicate == "[redacted]"
+        || object_for_placeholder == "[redacted]"
+    {
+        return Err(anyhow!("invalid placeholder field value"));
+    }
 
-        let valid_from = datetime_or_default(&item.valid_from, note.fm.created);
-        let valid_until = optional_datetime(&item.valid_until);
-        let confidence = item.confidence.map(|v| v as f32).unwrap_or(0.7);
-        let privacy = privacy_for_span(span_start, span_end, marker_spans, note.fm.privacy);
+    let (span_start, span_end) = resolve_claim_span(item, body, subject)?;
 
-        Ok(Claim {
-            id: Claim::compute_id(&subject, &predicate, &object, &note.fm.id, span_start),
+    let Some(span_text) = body.get(span_start..span_end) else {
+        return Err(anyhow!("invalid span: not on UTF-8 boundary"));
+    };
+    let trimmed_len = span_text.trim().chars().count();
+    if !(5..=300).contains(&trimmed_len) {
+        return Err(anyhow!("invalid span text length: {trimmed_len}"));
+    }
+
+    let valid_from = datetime_or_default(&item.valid_from, note.fm.created);
+    let valid_until = optional_datetime(&item.valid_until);
+    let confidence = item.confidence.map(|v| v as f32).unwrap_or(0.7);
+    let privacy = privacy_for_span(span_start, span_end, marker_spans, note.fm.privacy);
+
+    Ok(Claim {
+        id: Claim::compute_id(
             subject,
             predicate,
-            object,
-            note_id: note.fm.id.clone(),
+            object.as_deref(),
+            &note.fm.id,
             span_start,
-            span_end,
-            span_fingerprint: Claim::compute_fingerprint(span_text),
-            valid_from,
-            valid_until,
-            confidence,
-            privacy,
-            extracted_by: self.model_label.clone(),
-            extracted_at: Utc::now(),
-        })
+        ),
+        subject: subject.to_string(),
+        predicate: predicate.to_string(),
+        object,
+        note_id: note.fm.id.clone(),
+        span_start,
+        span_end,
+        span_fingerprint: Claim::compute_fingerprint(span_text),
+        valid_from,
+        valid_until,
+        confidence,
+        privacy,
+        extracted_by: extractor.model_label.clone(),
+        extracted_at: Utc::now(),
+    })
+}
+
+/// Prefer the LLM span when it fits the body, contains the subject, and passes length bounds.
+/// Otherwise recover via substring search on `subject`.
+fn resolve_claim_span(item: &LlmClaimRecord, body: &str, subject: &str) -> Result<(usize, usize)> {
+    let body_len = body.len();
+    let span_start_raw =
+        usize::try_from(item.span_start).map_err(|_| anyhow!("span_start does not fit usize"))?;
+    let span_end_raw =
+        usize::try_from(item.span_end).map_err(|_| anyhow!("span_end does not fit usize"))?;
+
+    let mut use_given = span_end_raw > span_start_raw
+        && span_end_raw <= body_len
+        && body.get(span_start_raw..span_end_raw).is_some();
+
+    if use_given {
+        let slice = body
+            .get(span_start_raw..span_end_raw)
+            .expect("bounds checked");
+        let trimmed_len = slice.trim().chars().count();
+        if !(5..=300).contains(&trimmed_len) || !slice.contains(subject) {
+            use_given = false;
+        }
     }
+
+    if use_given {
+        return Ok((span_start_raw, span_end_raw));
+    }
+
+    let Some(found_start) = body.find(subject) else {
+        tracing::warn!(
+            subject = %subject,
+            "claim subject not found in note body; dropping likely-fabricated claim"
+        );
+        return Err(anyhow!("subject not found in note body"));
+    };
+    let found_end = (found_start + subject.len() + 80).min(body_len);
+    if found_end <= found_start {
+        return Err(anyhow!("recovered span invalid"));
+    }
+    tracing::debug!(
+        subject = %subject,
+        original_span = ?(span_start_raw, span_end_raw),
+        recovered_span = ?(found_start, found_end),
+        "recovered claim span via substring search"
+    );
+    Ok((found_start, found_end))
 }
 
 pub fn render_body_with_offsets(body: &str) -> String {
@@ -247,17 +395,6 @@ pub fn render_body_with_offsets(body: &str) -> String {
         out.push_str("[byte:000000] ");
     }
     out
-}
-
-fn non_empty_trimmed(opt: &Option<String>, field: &str) -> Result<String> {
-    let Some(raw) = opt else {
-        return Err(anyhow!("missing or empty field: {field}"));
-    };
-    let value = raw.trim();
-    if value.is_empty() {
-        return Err(anyhow!("missing or empty field: {field}"));
-    }
-    Ok(value.to_string())
 }
 
 fn datetime_or_default(value: &Option<Value>, default: DateTime<Utc>) -> DateTime<Utc> {
@@ -373,7 +510,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use crate::claims::mock::MockExtractorLlm;
+    use crate::claims::mock::{MockExtractorLlm, MockSequentialExtractorLlm};
     use crate::claims::ClaimStore;
     use crate::index::Index;
     use crate::note::{Frontmatter, Note, NoteSource, Privacy};
@@ -508,7 +645,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn extractor_rejects_out_of_bounds_span() {
+    async fn extractor_recovers_out_of_bounds_span() {
         let body = "Rado works at HMC.";
         let response = r#"[{"subject":"Rado","predicate":"works_at","object":"HMC","span_start":0,"span_end":1000,"valid_from":null,"valid_until":null,"confidence":1.0}]"#;
         let extractor = make_extractor(response);
@@ -518,7 +655,8 @@ mod tests {
             .extract(&note, body)
             .await
             .expect("extract claims");
-        assert!(claims.is_empty());
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].span_start, body.find("Rado").expect("subject"));
     }
 
     #[tokio::test]
@@ -555,6 +693,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn extract_accepts_unary_claim_with_null_object() {
+        let body = "vault is in early stages for the work.";
+        let end = body.len();
+        let response = format!(
+            r#"[{{"subject":"vault","predicate":"in_early_stages","span_start":0,"span_end":{end},"valid_from":null,"valid_until":null,"confidence":0.9}}]"#
+        );
+        let extractor = make_extractor(&response);
+        let note = make_note("unary-null", body, Privacy::Private);
+        let claims = extractor.extract(&note, body).await.expect("extract");
+        assert_eq!(claims.len(), 1);
+        assert!(claims[0].object.is_none());
+    }
+
+    #[tokio::test]
+    async fn extract_accepts_unary_claim_with_empty_string_object() {
+        let body = "vault is in early stages for the work.";
+        let end = body.len();
+        let response = format!(
+            r#"[{{"subject":"vault","predicate":"in_early_stages","object":"","span_start":0,"span_end":{end},"valid_from":null,"valid_until":null,"confidence":0.9}}]"#
+        );
+        let extractor = make_extractor(&response);
+        let note = make_note("unary-empty", body, Privacy::Private);
+        let claims = extractor.extract(&note, body).await.expect("extract");
+        assert_eq!(claims.len(), 1);
+        assert!(claims[0].object.is_none());
+    }
+
+    #[tokio::test]
+    async fn extract_recovers_span_when_offsets_invalid() {
+        let body = "akmon launched today";
+        let response = r#"[{"subject":"akmon","predicate":"launched","span_start":0,"span_end":200,"valid_from":null,"valid_until":null,"confidence":0.9}]"#;
+        let extractor = make_extractor(response);
+        let note = make_note("recover-span", body, Privacy::Private);
+        let claims = extractor.extract(&note, body).await.expect("extract");
+        assert_eq!(claims.len(), 1);
+        let expected_end = ("akmon".len() + 80).min(body.len());
+        assert_eq!(claims[0].span_start, 0);
+        assert_eq!(claims[0].span_end, expected_end);
+    }
+
+    #[tokio::test]
+    async fn extract_drops_claim_when_subject_not_in_body() {
+        let body = "hello world today";
+        let response = r#"[{"subject":"fabricated-thing","predicate":"exists","object":"x","span_start":0,"span_end":11,"valid_from":null,"valid_until":null,"confidence":0.9}]"#;
+        let extractor = make_extractor(response);
+        let note = make_note("fabricated", body, Privacy::Private);
+        let claims = extractor.extract(&note, body).await.expect("extract");
+        assert!(claims.is_empty());
+    }
+
+    #[tokio::test]
+    async fn extract_retries_on_all_invalid_first_attempt() {
+        let body = "Rado works at HMC.";
+        let bad =
+            r#"[{"subject":"ghost","predicate":"nope","object":"x","span_start":0,"span_end":5}]"#;
+        let good_start = body.find("Rado works at HMC").expect("span");
+        let good_end = good_start + "Rado works at HMC".len();
+        let good = format!(
+            r#"[{{"subject":"Rado","predicate":"works_at","object":"HMC","span_start":{good_start},"span_end":{good_end},"valid_from":null,"valid_until":null,"confidence":1.0}}]"#
+        );
+        let extractor = ClaimExtractor {
+            llm: Arc::new(MockSequentialExtractorLlm::new(vec![bad.to_string(), good])),
+            model_label: "test/retry".to_string(),
+        };
+        let note = make_note("retry-ok", body, Privacy::Private);
+        let claims = extractor.extract(&note, body).await.expect("extract");
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].subject, "Rado");
+    }
+
+    #[tokio::test]
+    async fn extract_does_not_retry_twice() {
+        let body = "short.";
+        let bad =
+            r#"[{"subject":"ghost","predicate":"nope","object":"x","span_start":0,"span_end":2}]"#;
+        let extractor = ClaimExtractor {
+            llm: Arc::new(MockSequentialExtractorLlm::new(vec![
+                bad.to_string(),
+                bad.to_string(),
+            ])),
+            model_label: "test/noretry".to_string(),
+        };
+        let note = make_note("retry-stop", body, Privacy::Private);
+        let claims = extractor.extract(&note, body).await.expect("extract");
+        assert!(claims.is_empty());
+    }
+
+    #[tokio::test]
     async fn extractor_returns_error_for_malformed_json() {
         let body = "Rado works at HMC.";
         let extractor = make_extractor("{not json");
@@ -580,10 +806,10 @@ mod tests {
             .expect("upsert note for fk");
 
         let claim = Claim {
-            id: Claim::compute_id("Rado", "works_at", "HMC", &note.fm.id, 0),
+            id: Claim::compute_id("Rado", "works_at", Some("HMC"), &note.fm.id, 0),
             subject: "Rado".to_string(),
             predicate: "works_at".to_string(),
-            object: "HMC".to_string(),
+            object: Some("HMC".to_string()),
             note_id: note.fm.id.clone(),
             span_start: 0,
             span_end: 10,

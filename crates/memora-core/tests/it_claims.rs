@@ -309,10 +309,16 @@ async fn note_edit_marks_derived_claims_as_stale() -> Result<()> {
         .expect("source claim");
 
     let derived_claim = Claim {
-        id: Claim::compute_id("Project alpha", "risk_level", "low", "note-derived", 0),
+        id: Claim::compute_id(
+            "Project alpha",
+            "risk_level",
+            Some("low"),
+            "note-derived",
+            0,
+        ),
         subject: "Project alpha".to_string(),
         predicate: "risk_level".to_string(),
-        object: "low".to_string(),
+        object: Some("low".to_string()),
         note_id: "note-derived".to_string(),
         span_start: 0,
         span_end: body_d.len(),

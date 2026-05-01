@@ -68,7 +68,7 @@ struct FrontierCandidate {
     source_note_id: String,
     subject: String,
     predicate: String,
-    object: String,
+    object: Option<String>,
     confidence: f32,
     predicate_occurrences: usize,
 }
@@ -109,7 +109,9 @@ impl<'a> Challenger<'a> {
                  (1) the updated claim, OR (2) 'archive' if no longer applicable.\n\
                  Source: '{span_text}'. Old claim: '{} {} {}'.\n\
                  Output JSON {{\"action\":\"update\"|\"archive\",\"new_claim\"?:{{\"s\":\"...\",\"p\":\"...\",\"o\":\"...\"}}}}",
-                claim.subject, claim.predicate, claim.object
+                claim.subject,
+                claim.predicate,
+                claim.object_display()
             );
             let response = self
                 .llm
@@ -173,10 +175,10 @@ impl<'a> Challenger<'a> {
                  Claim B: '{} {} {}'",
                 left.subject,
                 left.predicate,
-                left.object,
+                left.object_display(),
                 right.subject,
                 right.predicate,
-                right.object
+                right.object_display()
             );
             let summary = self
                 .llm
@@ -260,7 +262,7 @@ impl<'a> Challenger<'a> {
                  BAD example: 'Is the note indicating that X has been initialized?'",
                 candidate.subject,
                 candidate.predicate,
-                candidate.object,
+                candidate.object.as_deref().unwrap_or("(unary)"),
                 candidate.confidence,
                 candidate.predicate_occurrences,
             );
@@ -399,7 +401,7 @@ impl<'a> Challenger<'a> {
                     source_note_id: row.get(1)?,
                     subject: row.get(2)?,
                     predicate: row.get(3)?,
-                    object: row.get(4)?,
+                    object: row.get::<_, Option<String>>(4)?,
                     confidence: row.get(5)?,
                     predicate_occurrences,
                 })

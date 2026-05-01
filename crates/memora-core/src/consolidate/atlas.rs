@@ -208,7 +208,10 @@ impl<'a> AtlasWriter<'a> {
             .map(|claim| {
                 format!(
                     "[\"{}\",\"{}\",\"{}\",\"{}\"]",
-                    claim.id, claim.subject, claim.predicate, claim.object
+                    claim.id,
+                    claim.subject,
+                    claim.predicate,
+                    claim.object.as_deref().unwrap_or("")
                 )
             })
             .collect::<Vec<_>>()
@@ -520,7 +523,10 @@ fn build_atlas_markdown(
                 } else {
                     out.push_str(&format!(
                         "- [claim:{}] {} {} (source note: [[{}]])\n",
-                        claim.id, claim.predicate, claim.object, claim.note_id
+                        claim.id,
+                        claim.predicate,
+                        claim.object_display(),
+                        claim.note_id
                     ));
                 }
             }
@@ -639,10 +645,10 @@ mod tests {
             .expect("valid datetime");
         let object = format!("obj{idx}");
         Claim {
-            id: Claim::compute_id(subject, "relates_to", &object, note_id, idx),
+            id: Claim::compute_id(subject, "relates_to", Some(&object), note_id, idx),
             subject: subject.to_string(),
             predicate: "relates_to".to_string(),
-            object,
+            object: Some(object),
             note_id: note_id.to_string(),
             span_start: 0,
             span_end: 4,

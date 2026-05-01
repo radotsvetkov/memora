@@ -164,9 +164,14 @@ fn rank_claims_by_note_score(
 fn format_claim_context(claims: &[RedactedClaim]) -> String {
     let mut out = String::from("Verified claims (cite these with [claim:ID] markers):\n");
     for claim in claims {
+        let object = if claim.object.is_empty() {
+            "(unary)"
+        } else {
+            claim.object.as_str()
+        };
         out.push_str(&format!(
             "- [claim:{}] {} {} {}\n",
-            claim.id, claim.subject, claim.predicate, claim.object
+            claim.id, claim.subject, claim.predicate, object
         ));
     }
     out
@@ -175,9 +180,14 @@ fn format_claim_context(claims: &[RedactedClaim]) -> String {
 fn build_extractive_answer(claims: &[RedactedClaim], limit: usize) -> String {
     let mut out = String::from("Based on indexed claims:\n");
     for claim in claims.iter().take(limit) {
+        let object = if claim.object.is_empty() {
+            "(unary)"
+        } else {
+            claim.object.as_str()
+        };
         out.push_str(&format!(
             "- {} {} {} [claim:{}]\n",
-            claim.subject, claim.predicate, claim.object, claim.id
+            claim.subject, claim.predicate, object, claim.id
         ));
     }
     out

@@ -64,6 +64,10 @@ const EMBEDDED_MIGRATIONS: &[(&str, &str)] = &[
         "0003_consolidation_runs.sql",
         include_str!("../../migrations/0003_consolidation_runs.sql"),
     ),
+    (
+        "0004_claims_object_nullable.sql",
+        include_str!("../../migrations/0004_claims_object_nullable.sql"),
+    ),
 ];
 
 pub(crate) fn normalize_fts_query(query: &str) -> Option<String> {

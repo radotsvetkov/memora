@@ -43,7 +43,7 @@ impl PrivacyFilter {
                     id: claim.id.clone(),
                     subject: claim.subject.clone(),
                     predicate: claim.predicate.clone(),
-                    object: claim.object.clone(),
+                    object: claim.object.clone().unwrap_or_default(),
                     redacted: false,
                     privacy: claim.privacy,
                 });
@@ -77,7 +77,7 @@ mod tests {
             id: "aaaaaaaaaaaaaaaa".to_string(),
             subject: "Comp".to_string(),
             predicate: "has_salary".to_string(),
-            object: "95000".to_string(),
+            object: Some("95000".to_string()),
             note_id: "note-1".to_string(),
             span_start: 0,
             span_end: 10,

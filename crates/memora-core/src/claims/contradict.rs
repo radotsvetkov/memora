@@ -114,7 +114,12 @@ Answer with JSON only. Use exactly {{"equivalent":true}} or {{"equivalent":false
 Claim B: subject="{}" predicate="{}" object="{}"
 
 Answer with JSON only. Use exactly {{"contradicts":true}} or {{"contradicts":false}}."#,
-            a.subject, a.predicate, a.object, b.subject, b.predicate, b.object
+            a.subject,
+            a.predicate,
+            a.object.as_deref().unwrap_or(""),
+            b.subject,
+            b.predicate,
+            b.object.as_deref().unwrap_or("")
         );
         let text = self
             .llm

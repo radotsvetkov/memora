@@ -54,9 +54,10 @@ impl<'a> ClaimStore<'a> {
             ],
         )?;
         tx.execute("DELETE FROM claims_fts WHERE id = ?", params![claim.id])?;
+        let object_fts = claim.object.as_deref().unwrap_or("");
         tx.execute(
             "INSERT INTO claims_fts (id, subject, predicate, object) VALUES (?, ?, ?, ?)",
-            params![claim.id, claim.subject, claim.predicate, claim.object],
+            params![claim.id, claim.subject, claim.predicate, object_fts],
         )?;
         Ok(())
     }
@@ -361,7 +362,7 @@ fn map_claim_row_from_offset(
         id: row.get(offset)?,
         subject: row.get(offset + 1)?,
         predicate: row.get(offset + 2)?,
-        object: row.get(offset + 3)?,
+        object: row.get::<_, Option<String>>(offset + 3)?,
         note_id: row.get(offset + 4)?,
         span_start,
         span_end,
@@ -379,7 +380,7 @@ fn map_claim_row_from_offset(
 mod tests {
     use std::path::Path;
 
-    use chrono::TimeZone;
+    use chrono::{TimeZone, Utc};
     use rusqlite::params;
 
     use super::*;
@@ -416,10 +417,10 @@ mod tests {
         valid_until: Option<chrono::DateTime<Utc>>,
     ) -> Claim {
         Claim {
-            id: Claim::compute_id("X", "works_at", object, note_id, 0),
+            id: Claim::compute_id("X", "works_at", Some(object), note_id, 0),
             subject: "X".to_string(),
             predicate: "works_at".to_string(),
-            object: object.to_string(),
+            object: Some(object.to_string()),
             note_id: note_id.to_string(),
             span_start: 0,
             span_end: 4,
@@ -467,6 +468,42 @@ mod tests {
         assert_eq!(by_subject.len(), 1);
         assert_eq!(by_subject[0].id, claim_c.id);
 
+        Ok(())
+    }
+
+    #[test]
+    fn sqlite_schema_allows_null_object() -> Result<(), IndexError> {
+        let index = Index::open(std::path::Path::new(":memory:"))?;
+        seed_note(&index, "note-null-obj")?;
+
+        let conn = index.pool.get()?;
+        let object_notnull: i64 = conn.query_row(
+            "SELECT \"notnull\" FROM pragma_table_info('claims') WHERE name = 'object'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(object_notnull, 0, "claims.object must allow NULL");
+
+        let claim = Claim {
+            id: Claim::compute_id("u", "pred", None, "note-null-obj", 0),
+            subject: "u".to_string(),
+            predicate: "pred".to_string(),
+            object: None,
+            note_id: "note-null-obj".to_string(),
+            span_start: 0,
+            span_end: 9,
+            span_fingerprint: Claim::compute_fingerprint("body-hash"),
+            valid_from: Utc::now(),
+            valid_until: None,
+            confidence: 1.0,
+            privacy: Privacy::Private,
+            extracted_by: "test/sqlite".to_string(),
+            extracted_at: Utc::now(),
+        };
+        let store = ClaimStore::new(&index);
+        store.upsert(&claim)?;
+        let fetched = store.get(&claim.id)?.expect("claim row");
+        assert!(fetched.object.is_none());
         Ok(())
     }
 }

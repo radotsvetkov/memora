@@ -11,7 +11,8 @@ pub struct Claim {
     pub id: String,
     pub subject: String,
     pub predicate: String,
-    pub object: String,
+    /// `None` for unary predicates (no object / "in early stages" style facts).
+    pub object: Option<String>,
     pub note_id: String,
     pub span_start: usize,
     pub span_end: usize,
@@ -25,7 +26,14 @@ pub struct Claim {
 }
 
 impl Claim {
-    pub fn compute_id(s: &str, p: &str, o: &str, note_id: &str, span_start: usize) -> String {
+    pub fn compute_id(
+        s: &str,
+        p: &str,
+        o: Option<&str>,
+        note_id: &str,
+        span_start: usize,
+    ) -> String {
+        let o = o.unwrap_or("");
         let payload = format!("{s}|{p}|{o}|{note_id}|{span_start}");
         let hash = blake3::hash(payload.as_bytes());
         hash.to_hex().to_string().chars().take(16).collect()
@@ -34,6 +42,11 @@ impl Claim {
     pub fn compute_fingerprint(span_text: &str) -> String {
         let hash = blake3::hash(span_text.as_bytes());
         hash.to_hex().to_string().chars().take(16).collect()
+    }
+
+    /// Human-readable object for prompts and logs; unary claims show a placeholder.
+    pub fn object_display(&self) -> &str {
+        self.object.as_deref().unwrap_or("(unary)")
     }
 }
 
@@ -83,11 +96,11 @@ mod tests {
 
     #[test]
     fn claim_id_is_stable_and_truncated() {
-        let id = Claim::compute_id("rado", "works_at", "hmc", "note-1", 12);
+        let id = Claim::compute_id("rado", "works_at", Some("hmc"), "note-1", 12);
         assert_eq!(id.len(), 16);
         assert_eq!(
             id,
-            Claim::compute_id("rado", "works_at", "hmc", "note-1", 12)
+            Claim::compute_id("rado", "works_at", Some("hmc"), "note-1", 12)
         );
     }
 
