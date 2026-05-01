@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use gray_matter::engine::YAML;
 use gray_matter::Matter;
 use regex::Regex;
@@ -94,7 +94,9 @@ pub struct Frontmatter {
     pub source: NoteSource,
     #[serde(default)]
     pub privacy: Privacy,
+    #[serde(deserialize_with = "deserialize_lenient_datetime")]
     pub created: DateTime<Utc>,
+    #[serde(deserialize_with = "deserialize_lenient_datetime")]
     pub updated: DateTime<Utc>,
     pub summary: String,
     #[serde(default)]
@@ -138,7 +140,9 @@ struct RawFrontmatter {
     source: NoteSource,
     #[serde(default)]
     privacy: Privacy,
+    #[serde(default, deserialize_with = "deserialize_optional_lenient_datetime")]
     created: Option<DateTime<Utc>>,
+    #[serde(default, deserialize_with = "deserialize_optional_lenient_datetime")]
     updated: Option<DateTime<Utc>>,
     summary: Option<String>,
     #[serde(default, deserialize_with = "deserialize_vec_or_default")]
@@ -489,8 +493,8 @@ fn parse_partial_frontmatter(value: &Value) -> Result<PartialFrontmatter, ParseE
         region: deserialize_optional_field(map, "region")?,
         source: deserialize_optional_field(map, "source")?,
         privacy: deserialize_optional_field(map, "privacy")?,
-        created: deserialize_optional_field(map, "created")?,
-        updated: deserialize_optional_field(map, "updated")?,
+        created: deserialize_optional_datetime_field(map, "created")?,
+        updated: deserialize_optional_datetime_field(map, "updated")?,
         summary: deserialize_optional_field(map, "summary")?,
         tags: deserialize_optional_vec_field(map, "tags")?,
         refs: deserialize_optional_vec_field(map, "refs")?,
@@ -524,12 +528,84 @@ fn deserialize_optional_vec_field(
     }
 }
 
+fn deserialize_optional_datetime_field(
+    map: &Mapping,
+    key: &'static str,
+) -> Result<Option<DateTime<Utc>>, ParseError> {
+    let lookup = Value::String(key.to_string());
+    match map.get(&lookup) {
+        Some(Value::Null) => Ok(None),
+        Some(raw) => {
+            let value = match raw {
+                Value::String(value) => value.to_string(),
+                _ => serde_yaml::from_value::<String>(raw.clone()).map_err(|err| {
+                    ParseError::InvalidFrontmatter(format!("invalid field `{key}`: {err}"))
+                })?,
+            };
+            parse_lenient_datetime_str(&value).map(Some).map_err(|err| {
+                ParseError::InvalidFrontmatter(format!("invalid field `{key}`: {err}"))
+            })
+        }
+        None => Ok(None),
+    }
+}
+
 fn deserialize_vec_or_default<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let value = Option::<Vec<String>>::deserialize(deserializer)?;
     Ok(value.unwrap_or_default())
+}
+
+fn deserialize_lenient_datetime<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    parse_lenient_datetime_str(&s).map_err(serde::de::Error::custom)
+}
+
+fn deserialize_optional_lenient_datetime<'de, D>(
+    deserializer: D,
+) -> Result<Option<DateTime<Utc>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    match value {
+        Some(s) => parse_lenient_datetime_str(&s)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        None => Ok(None),
+    }
+}
+
+fn parse_lenient_datetime_str(input: &str) -> Result<DateTime<Utc>, String> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(input) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+
+    for fmt in &[
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S",
+    ] {
+        if let Ok(naive) = NaiveDateTime::parse_from_str(input, fmt) {
+            return Ok(Utc.from_utc_datetime(&naive));
+        }
+    }
+
+    if let Ok(date) = NaiveDate::parse_from_str(input, "%Y-%m-%d") {
+        let naive = date
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| format!("invalid midnight timestamp for date '{input}'"))?;
+        return Ok(Utc.from_utc_datetime(&naive));
+    }
+
+    Err(format!(
+        "could not parse datetime '{input}' - expected RFC 3339 or naive ISO 8601"
+    ))
 }
 
 fn split_frontmatter_block(source: &str) -> Result<Option<(String, String)>, ParseError> {
@@ -1214,6 +1290,105 @@ Body
             parse_or_infer_impl(&second, &vault_root, false).expect("second infer should succeed");
         assert_eq!(first_note.fm.id, "project-idea");
         assert_eq!(second_note.fm.id, "project-idea-2");
+    }
+
+    #[test]
+    fn frontmatter_accepts_naive_datetime() {
+        let note_text = r#"---
+id: naive-dt
+region: default
+source: personal
+privacy: private
+created: 2026-04-29T08:19:00
+updated: 2026-04-29T08:20:00
+summary: "Naive datetime"
+---
+Body
+"#;
+        let file = write_temp(note_text);
+        let note = parse(file.path()).expect("naive datetime should parse");
+        assert_eq!(note.fm.created.to_rfc3339(), "2026-04-29T08:19:00+00:00");
+    }
+
+    #[test]
+    fn frontmatter_accepts_rfc3339_with_z() {
+        let note_text = r#"---
+id: z-dt
+region: default
+source: personal
+privacy: private
+created: 2026-04-29T08:19:00Z
+updated: 2026-04-29T08:20:00Z
+summary: "RFC3339 datetime"
+---
+Body
+"#;
+        let file = write_temp(note_text);
+        let note = parse(file.path()).expect("rfc3339 datetime should parse");
+        assert_eq!(note.fm.created.to_rfc3339(), "2026-04-29T08:19:00+00:00");
+    }
+
+    #[test]
+    fn frontmatter_accepts_naive_with_fractional() {
+        let note_text = r#"---
+id: fractional-dt
+region: default
+source: personal
+privacy: private
+created: 2026-04-29T08:19:00.123
+updated: 2026-04-29T08:20:00.456
+summary: "Fractional datetime"
+---
+Body
+"#;
+        let file = write_temp(note_text);
+        let note = parse(file.path()).expect("fractional naive datetime should parse");
+        assert_eq!(note.fm.created.timestamp_subsec_millis(), 123);
+    }
+
+    #[test]
+    fn frontmatter_rejects_garbage_datetime() {
+        let note_text = r#"---
+id: bad-dt
+region: default
+source: personal
+privacy: private
+created: not a date
+updated: 2026-04-29T08:20:00Z
+summary: "Bad datetime"
+---
+Body
+"#;
+        let file = write_temp(note_text);
+        let err = parse(file.path()).expect_err("garbage datetime should fail");
+        assert!(matches!(err, ParseError::InvalidFrontmatter(_)));
+    }
+
+    #[test]
+    fn frontmatter_rewrite_normalizes_to_z() {
+        let temp = tempdir().expect("create tempdir");
+        let path = temp.path().join("normalize-z.md");
+        fs::write(
+            &path,
+            r#"---
+id: normalize-z
+region: default
+source: personal
+privacy: private
+created: 2026-04-29T08:19:00
+updated: 2026-04-29T08:20:00
+summary: "Normalize timestamps"
+---
+Body
+"#,
+        )
+        .expect("write note");
+
+        let parsed = parse(&path).expect("parse with naive datetime");
+        rewrite_with_frontmatter(&path, &parsed.fm, &parsed.body).expect("rewrite succeeds");
+        let rewritten = fs::read_to_string(&path).expect("read rewritten");
+        assert!(rewritten.contains("created: 2026-04-29T08:19:00Z"));
+        assert!(rewritten.contains("updated: 2026-04-29T08:20:00Z"));
     }
 
     fn body_only_note() -> &'static str {

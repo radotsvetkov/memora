@@ -96,11 +96,14 @@ impl<'a> Indexer<'a> {
                     {
                         Ok(parsed) => parsed,
                         Err(err) => {
+                            let error_chain =
+                                err.chain().map(ToString::to_string).collect::<Vec<_>>();
                             stats.skipped += 1;
                             stats.errors += 1;
                             tracing::warn!(
                                 path = %path.display(),
                                 error = %err,
+                                error_chain = ?error_chain,
                                 "failed to align note region during rebuild"
                             );
                             continue;
@@ -108,16 +111,28 @@ impl<'a> Indexer<'a> {
                     };
                     seen_ids.insert(parsed.fm.id.clone());
                     if let Err(err) = self.upsert_note(&parsed).await {
+                        let error_chain = err.chain().map(ToString::to_string).collect::<Vec<_>>();
                         stats.errors += 1;
-                        tracing::warn!(path = %path.display(), error = %err, "failed to upsert parsed note");
+                        tracing::warn!(
+                            path = %path.display(),
+                            error = %err,
+                            error_chain = ?error_chain,
+                            "failed to index note"
+                        );
                     } else {
                         stats.inserted += 1;
                     }
                 }
                 Err(err) => {
+                    let error_chain = err.chain().map(ToString::to_string).collect::<Vec<_>>();
                     stats.skipped += 1;
                     stats.errors += 1;
-                    tracing::warn!(path = %path.display(), error = %err, "failed to parse note during rebuild");
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %err,
+                        error_chain = ?error_chain,
+                        "failed to index note"
+                    );
                 }
             }
         }

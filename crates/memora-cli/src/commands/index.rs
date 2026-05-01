@@ -50,6 +50,12 @@ pub async fn run(args: IndexArgs) -> Result<()> {
         "Indexed: inserted={}, skipped={}, errors={}",
         stats.inserted, stats.skipped, stats.errors
     );
+    if stats.errors > 0 {
+        println!(
+            "\n{} notes failed to index. Re-run with RUST_LOG=warn or RUST_LOG=debug for per-note details.",
+            stats.errors
+        );
+    }
     Ok(())
 }
 

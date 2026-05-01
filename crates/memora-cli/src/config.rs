@@ -21,9 +21,9 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn load(vault_root: &Path) -> Result<Self> {
-        let path = config_path(vault_root);
-        let figment = Figment::from(Serialized::defaults(Self::default())).merge(Toml::file(path));
-        Ok(figment.extract()?)
+        let vault_config = config_path(vault_root);
+        let global_config = global_config_path();
+        Self::load_from_paths(&vault_config, global_config.as_deref())
     }
 
     pub fn write_default(vault_root: &Path) -> Result<PathBuf> {
@@ -35,10 +35,32 @@ impl AppConfig {
         fs::write(&path, content)?;
         Ok(path)
     }
+
+    fn load_from_paths(vault_config: &Path, global_config: Option<&Path>) -> Result<Self> {
+        let chosen = if vault_config.exists() {
+            Some(vault_config.to_path_buf())
+        } else {
+            global_config
+                .filter(|path| path.exists())
+                .map(|path| path.to_path_buf())
+        };
+
+        let figment = match chosen {
+            Some(path) => {
+                Figment::from(Serialized::defaults(Self::default())).merge(Toml::file(path))
+            }
+            None => Figment::from(Serialized::defaults(Self::default())),
+        };
+        Ok(figment.extract()?)
+    }
 }
 
 pub fn config_path(vault_root: &Path) -> PathBuf {
     vault_root.join(".memora").join("config.toml")
+}
+
+pub fn global_config_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(".config").join("memora").join("config.toml"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,5 +182,59 @@ impl Default for PrivacyConfig {
             redact_secret_in_cloud: true,
             warn_on_secret_query: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::*;
+
+    #[test]
+    fn config_loads_from_vault_local_first() {
+        let temp = tempdir().expect("create tempdir");
+        let vault = temp.path().join("vault");
+        fs::create_dir_all(vault.join(".memora")).expect("create vault config dir");
+        let global_root = temp.path().join("home/.config/memora");
+        fs::create_dir_all(&global_root).expect("create global config dir");
+
+        let vault_cfg = vault.join(".memora/config.toml");
+        let global_cfg = global_root.join("config.toml");
+        fs::write(&vault_cfg, "[llm]\nprovider = \"anthropic\"\n").expect("write vault config");
+        fs::write(&global_cfg, "[llm]\nprovider = \"openai\"\n").expect("write global config");
+
+        let cfg = AppConfig::load_from_paths(&vault_cfg, Some(&global_cfg)).expect("load config");
+        assert_eq!(cfg.llm.provider, "anthropic");
+    }
+
+    #[test]
+    fn config_falls_back_to_global() {
+        let temp = tempdir().expect("create tempdir");
+        let vault_cfg = temp.path().join("vault/.memora/config.toml");
+        let global_cfg = temp.path().join("home/.config/memora/config.toml");
+        fs::create_dir_all(
+            global_cfg
+                .parent()
+                .expect("global config path should have a parent directory"),
+        )
+        .expect("create global config dir");
+        fs::write(&global_cfg, "[llm]\nprovider = \"anthropic\"\n").expect("write global config");
+
+        let cfg = AppConfig::load_from_paths(&vault_cfg, Some(&global_cfg)).expect("load config");
+        assert_eq!(cfg.llm.provider, "anthropic");
+    }
+
+    #[test]
+    fn config_returns_default_when_neither() {
+        let temp = tempdir().expect("create tempdir");
+        let vault_cfg = temp.path().join("vault/.memora/config.toml");
+        let global_cfg = temp.path().join("home/.config/memora/config.toml");
+
+        let cfg = AppConfig::load_from_paths(&vault_cfg, Some(&global_cfg)).expect("load config");
+        assert_eq!(cfg.llm.provider, AppConfig::default().llm.provider);
+        assert_eq!(cfg.embed.model, AppConfig::default().embed.model);
     }
 }
