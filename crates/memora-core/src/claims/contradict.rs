@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Result;
-use memora_llm::{CompletionRequest, LlmClient, Message, Role};
+use memora_llm::LlmClient;
+use serde_json::Value;
 
 use crate::claims::{Claim, ClaimRelation, ClaimStore, StalenessTracker};
 
@@ -12,7 +13,7 @@ static PREDICATE_EQUIVALENCE_CACHE: OnceLock<Mutex<HashMap<(String, String), boo
 pub struct ContradictionDetector<'a> {
     pub store: &'a ClaimStore<'a>,
     pub stale: &'a StalenessTracker<'a>,
-    pub llm: &'a dyn LlmClient,
+    pub llm: Arc<dyn LlmClient>,
 }
 
 impl<'a> ContradictionDetector<'a> {
@@ -83,23 +84,23 @@ impl<'a> ContradictionDetector<'a> {
         }
 
         let prompt = format!(
-            "Are these two predicates synonymous in context of {subject}?\nA: {a}\nB: {b}\nReply with 'yes' or 'no'."
+            r#"Subject: {subject}
+Predicate A: {a}
+Predicate B: {b}
+
+Answer with JSON only. Use exactly {{"equivalent":true}} or {{"equivalent":false}}."#
         );
-        let response = self
+        let text = self
             .llm
-            .complete(CompletionRequest {
-                model: None,
-                system: None,
-                messages: vec![Message {
-                    role: Role::User,
-                    content: prompt,
-                }],
-                max_tokens: 16,
-                temperature: 0.0,
-                json_mode: false,
-            })
+            .chat_json(
+                &prompt,
+                Some("Output must be one JSON object with boolean field \"equivalent\"."),
+                128,
+                0.0,
+            )
             .await?;
-        let equivalent = starts_with_yes(&response.text);
+        let equivalent =
+            parse_bool_field(&text, "equivalent").unwrap_or_else(|| starts_with_yes(&text));
         cache
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -109,25 +110,28 @@ impl<'a> ContradictionDetector<'a> {
 
     async fn claims_contradict(&self, a: &Claim, b: &Claim) -> Result<bool> {
         let prompt = format!(
-            "Do these claims contradict each other?\nA: '{}, {}, {}'\nB: '{}, {}, {}'\nReply with 'yes' or 'no' and a short reason.",
+            r#"Claim A: subject="{}" predicate="{}" object="{}"
+Claim B: subject="{}" predicate="{}" object="{}"
+
+Answer with JSON only. Use exactly {{"contradicts":true}} or {{"contradicts":false}}."#,
             a.subject, a.predicate, a.object, b.subject, b.predicate, b.object
         );
-        let response = self
+        let text = self
             .llm
-            .complete(CompletionRequest {
-                model: None,
-                system: None,
-                messages: vec![Message {
-                    role: Role::User,
-                    content: prompt,
-                }],
-                max_tokens: 48,
-                temperature: 0.0,
-                json_mode: false,
-            })
+            .chat_json(
+                &prompt,
+                Some("Output must be one JSON object with boolean field \"contradicts\"."),
+                160,
+                0.0,
+            )
             .await?;
-        Ok(starts_with_yes(&response.text))
+        Ok(parse_bool_field(&text, "contradicts").unwrap_or_else(|| starts_with_yes(&text)))
     }
+}
+
+fn parse_bool_field(text: &str, key: &str) -> Option<bool> {
+    let value: Value = serde_json::from_str(text.trim()).ok()?;
+    value.get(key)?.as_bool()
 }
 
 fn starts_with_yes(text: &str) -> bool {

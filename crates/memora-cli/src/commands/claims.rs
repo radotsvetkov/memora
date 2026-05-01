@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use memora_core::claims::{ClaimExtractor, ClaimStore};
@@ -46,7 +48,12 @@ async fn run_extract(args: ClaimsExtractArgs) -> Result<()> {
         "openai" => LlmProvider::OpenAi,
         _ => LlmProvider::Ollama,
     };
-    let llm = make_client(provider, cfg.llm.model.clone())?;
+    let llm = make_client(
+        provider,
+        cfg.llm.model.clone(),
+        cfg.llm.endpoint.clone(),
+        cfg.llm.embedding_model.clone(),
+    )?;
     let index = open_index(&args.vault)?;
     let store = ClaimStore::new(&index);
     let row = index
@@ -59,7 +66,7 @@ async fn run_extract(args: ClaimsExtractArgs) -> Result<()> {
     };
     let parsed = note::parse(&path)?;
     let extractor = ClaimExtractor {
-        llm: llm.as_ref(),
+        llm: Arc::clone(&llm),
         model_label: llm.model_name().to_string(),
     };
     let claims = extractor.extract(&parsed, &parsed.body).await?;

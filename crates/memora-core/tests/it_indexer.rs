@@ -606,3 +606,37 @@ refs: []
 
     Ok(())
 }
+
+#[tokio::test]
+async fn parallel_indexing_processes_all_notes() -> Result<()> {
+    let temp = tempdir()?;
+    let vault_root = temp.path().join("vault");
+    fs::create_dir_all(&vault_root)?;
+    for i in 0..20 {
+        let path = vault_root.join(format!("n{i}.md"));
+        write_note(
+            &path,
+            &format!("note-{i}"),
+            &format!("summary {i}"),
+            &[],
+            &format!("Body content for note {i} with enough characters for indexing."),
+        )?;
+    }
+
+    let index_path = temp.path().join("index").join("memora.db");
+    let index = Index::open(&index_path)?;
+    let vault = Vault::new(&vault_root);
+    let embedder: Arc<dyn Embedder> = Arc::new(DeterministicEmbedder::new(64));
+    let vector_index = Arc::new(Mutex::new(VectorIndex::open_or_create(
+        &temp.path().join("index").join("vectors"),
+        embedder.dim(),
+    )?));
+    let indexer = Indexer::new(&vault, &index, embedder, vector_index).with_parallel_notes(4);
+
+    let stats = indexer.full_rebuild().await?;
+    assert_eq!(stats.inserted, 20);
+    assert_eq!(stats.errors, 0);
+    assert_eq!(index.all_ids()?.len(), 20);
+
+    Ok(())
+}

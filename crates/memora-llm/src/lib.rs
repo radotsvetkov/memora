@@ -9,3 +9,4 @@ pub use client::{
     make_client, CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError,
     LlmProvider, Message, Role,
 };
+pub use ollama::OllamaClient;

@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.18"
+version = "0.1.20"
 edition = "2021"
 rust-version = "1.75"
 authors = ["Rado"]
@@ -48,6 +48,7 @@ assert_cmd = "2"
 predicates = "3"
 uuid = { version = "1", features = ["v4"] }
 dirs = "5"
+futures = "0.3"
 
 [profile.release]
 lto = "thin"

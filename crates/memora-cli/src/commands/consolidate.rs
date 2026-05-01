@@ -26,7 +26,12 @@ pub async fn run(args: ConsolidateArgs) -> Result<()> {
         "openai" => LlmProvider::OpenAi,
         _ => LlmProvider::Ollama,
     };
-    let llm = make_client(provider, cfg.llm.model.clone())?;
+    let llm = make_client(
+        provider,
+        cfg.llm.model.clone(),
+        cfg.llm.endpoint.clone(),
+        cfg.llm.embedding_model.clone(),
+    )?;
     let atlas = AtlasWriter {
         db: &index,
         claim_store: &claim_store,

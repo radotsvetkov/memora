@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub struct AppConfig {
     pub llm: LlmConfig,
     pub embed: EmbedConfig,
+    pub indexing: IndexingConfig,
     pub retrieval: RetrievalConfig,
     pub watch: WatchConfig,
     pub frontmatter: FrontmatterConfig,
@@ -67,6 +68,12 @@ pub fn global_config_path() -> Option<PathBuf> {
 pub struct LlmConfig {
     pub provider: String,
     pub model: Option<String>,
+    /// Used for `/api/embeddings` when `[embed] provider = "ollama"`. Falls back to `model`.
+    #[serde(default)]
+    pub embedding_model: Option<String>,
+    /// Ollama base URL (e.g. `http://localhost:11434`). Falls back to `OLLAMA_HOST` or localhost.
+    #[serde(default)]
+    pub endpoint: Option<String>,
 }
 
 impl Default for LlmConfig {
@@ -74,6 +81,26 @@ impl Default for LlmConfig {
         Self {
             provider: "ollama".to_string(),
             model: None,
+            embedding_model: None,
+            endpoint: None,
+        }
+    }
+}
+
+fn default_index_parallelism() -> usize {
+    8
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexingConfig {
+    #[serde(default = "default_index_parallelism")]
+    pub parallelism: usize,
+}
+
+impl Default for IndexingConfig {
+    fn default() -> Self {
+        Self {
+            parallelism: default_index_parallelism(),
         }
     }
 }
@@ -236,5 +263,9 @@ mod tests {
         let cfg = AppConfig::load_from_paths(&vault_cfg, Some(&global_cfg)).expect("load config");
         assert_eq!(cfg.llm.provider, AppConfig::default().llm.provider);
         assert_eq!(cfg.embed.model, AppConfig::default().embed.model);
+        assert_eq!(
+            cfg.indexing.parallelism,
+            AppConfig::default().indexing.parallelism
+        );
     }
 }

@@ -32,7 +32,7 @@ pub async fn run(args: WatchArgs) -> Result<()> {
     let vault = open_vault(&args.vault);
     let index = Arc::new(open_index(&args.vault)?);
     let vector = open_vector(&args.vault, &cfg.embed)?;
-    let embedder = build_embedder(&cfg.embed);
+    let embedder = build_embedder(&cfg.embed, &cfg.llm)?;
     let refs_sync_mode = cfg.frontmatter.refs_sync_mode()?;
     let debounce = Duration::from_millis(cfg.watch.debounce_ms);
     let indexer = memora_core::indexer::Indexer::new(
@@ -50,11 +50,16 @@ pub async fn run(args: WatchArgs) -> Result<()> {
         "openai" => LlmProvider::OpenAi,
         _ => LlmProvider::Ollama,
     };
-    let llm = make_client(provider, cfg.llm.model.clone())?;
+    let llm = make_client(
+        provider,
+        cfg.llm.model.clone(),
+        cfg.llm.endpoint.clone(),
+        cfg.llm.embedding_model.clone(),
+    )?;
     let scheduler = Scheduler::spawn(
         SchedulerConfig::default(),
         index.clone(),
-        Arc::from(llm),
+        llm.clone(),
         args.vault.clone(),
     );
 

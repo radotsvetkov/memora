@@ -1,9 +1,11 @@
+use std::sync::Arc;
+
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde_json::Value;
 
-use memora_llm::{CompletionRequest, LlmClient, Message, Role};
+use memora_llm::LlmClient;
 
 use crate::claims::privacy_markers::{parse_privacy_spans, privacy_for_span};
 use crate::claims::Claim;
@@ -44,28 +46,18 @@ Note body (with byte offsets visible as comments at every line start):
 
 OUTPUT JSON ARRAY ONLY."#;
 
-pub struct ClaimExtractor<'a> {
-    pub llm: &'a dyn LlmClient,
+#[derive(Clone)]
+pub struct ClaimExtractor {
+    pub llm: Arc<dyn LlmClient>,
     pub model_label: String,
 }
 
-impl<'a> ClaimExtractor<'a> {
+impl ClaimExtractor {
     pub async fn extract(&self, note: &Note, body: &str) -> Result<Vec<Claim>> {
         let marker_spans = parse_privacy_spans(body);
         let prompt = self.render_prompt(note, body);
-        let req = CompletionRequest {
-            model: None,
-            system: None,
-            messages: vec![Message {
-                role: Role::User,
-                content: prompt,
-            }],
-            max_tokens: 2_000,
-            temperature: 0.1,
-            json_mode: true,
-        };
-        let items = match self.llm.complete(req).await {
-            Ok(response) => match parse_llm_items(&response.text) {
+        let items = match self.llm.chat_json(&prompt, None, 2_000, 0.1).await {
+            Ok(text) => match parse_llm_items(&text) {
                 Ok(items) => items,
                 Err(err) => {
                     tracing::warn!(
@@ -310,6 +302,8 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     use super::*;
+    use std::sync::Arc;
+
     use crate::claims::mock::MockExtractorLlm;
     use crate::claims::ClaimStore;
     use crate::index::Index;
@@ -340,12 +334,11 @@ mod tests {
         }
     }
 
-    fn make_extractor(canned_response: &str) -> ClaimExtractor<'_> {
-        let llm = Box::leak(Box::new(MockExtractorLlm {
-            canned_response: canned_response.to_string(),
-        }));
+    fn make_extractor(canned_response: &str) -> ClaimExtractor {
         ClaimExtractor {
-            llm,
+            llm: Arc::new(MockExtractorLlm {
+                canned_response: canned_response.to_string(),
+            }),
             model_label: "test/extractor".to_string(),
         }
     }

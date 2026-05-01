@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use clap::Args;
-use memora_core::claims::{ClaimExtractor, ClaimStore};
+use memora_core::claims::ClaimExtractor;
 use memora_core::indexer::{FrontmatterFixMode, Indexer};
 use memora_core::note::ParseError;
 use memora_llm::{make_client, LlmProvider};
@@ -18,6 +18,11 @@ pub struct IndexArgs {
     pub auto_fix_frontmatter: bool,
     #[arg(long, conflicts_with = "auto_fix_frontmatter")]
     pub no_auto_fix_frontmatter: bool,
+    /// Skip contradiction detection during indexing. Recommended for first-time bulk import —
+    /// contradictions among newly-imported notes don't have meaningful temporal order. Run
+    /// dedicated contradiction workflows separately after import if needed.
+    #[arg(long)]
+    pub no_contradict: bool,
 }
 
 pub async fn run(args: IndexArgs) -> Result<()> {
@@ -28,32 +33,44 @@ pub async fn run(args: IndexArgs) -> Result<()> {
     let vault = open_vault(&args.vault);
     let index = open_index(&args.vault)?;
     let vector = open_vector(&args.vault, &cfg.embed)?;
-    let embedder = build_embedder(&cfg.embed);
+    let embedder = build_embedder(&cfg.embed, &cfg.llm)?;
     let provider = match cfg.llm.provider.as_str() {
         "anthropic" => LlmProvider::Anthropic,
         "openai" => LlmProvider::OpenAi,
         _ => LlmProvider::Ollama,
     };
-    let llm = make_client(provider, cfg.llm.model.clone())?;
-    let claim_store = ClaimStore::new(&index);
+    let llm = make_client(
+        provider,
+        cfg.llm.model.clone(),
+        cfg.llm.endpoint.clone(),
+        cfg.llm.embedding_model.clone(),
+    )?;
     let claim_extractor = ClaimExtractor {
-        llm: llm.as_ref(),
+        llm: Arc::clone(&llm),
         model_label: llm.model_name().to_string(),
     };
     let refs_sync_mode = cfg.frontmatter.refs_sync_mode()?;
     let indexer = Indexer::new(&vault, &index, embedder, Arc::new(Mutex::new(vector)))
         .with_frontmatter_fix_mode(fix_mode)
         .with_refs_sync_mode(refs_sync_mode)
-        .with_claims(claim_extractor, claim_store);
+        .with_claims(claim_extractor)
+        .with_parallel_notes(cfg.indexing.parallelism)
+        .with_skip_contradiction_detection(args.no_contradict);
     let stats = indexer.full_rebuild().await?;
     println!(
         "Indexed: inserted={}, skipped={}, errors={}",
         stats.inserted, stats.skipped, stats.errors
     );
     if stats.errors > 0 {
-        println!(
-            "\n{} notes failed to index. Re-run with RUST_LOG=warn or RUST_LOG=debug for per-note details.",
+        eprintln!(
+            "\n{} notes failed. Re-run with RUST_LOG=warn for details.",
             stats.errors
+        );
+    }
+    if stats.inserted > 50 && !args.no_contradict {
+        eprintln!(
+            "\nTip: For large vaults, --no-contradict speeds up first-time indexing significantly. \
+             Contradiction detection runs continuously in `memora watch`."
         );
     }
     Ok(())

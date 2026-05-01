@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
-use memora_core::{Embedder, Index, Vault, VectorIndex};
+use memora_core::{Embedder, Index, OllamaEmbedder, Vault, VectorIndex};
+use memora_llm::OllamaClient;
 
-use crate::config::EmbedConfig;
+use crate::config::{EmbedConfig, LlmConfig};
 
 pub fn open_index(vault: &std::path::Path) -> Result<Index> {
     Index::open(&vault.join(".memora").join("memora.db")).map_err(Into::into)
@@ -57,6 +58,18 @@ impl Embedder for DeterministicEmbedder {
     }
 }
 
-pub fn build_embedder(cfg: &EmbedConfig) -> Arc<dyn Embedder> {
-    Arc::new(DeterministicEmbedder::new(cfg.dim))
+pub fn build_embedder(cfg: &EmbedConfig, llm: &LlmConfig) -> Result<Arc<dyn Embedder>> {
+    match cfg.provider.as_str() {
+        "ollama" => {
+            let client = OllamaClient::new(
+                llm.model.clone(),
+                llm.endpoint.clone(),
+                llm.embedding_model.clone(),
+            )
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .context("configure Ollama embedding client")?;
+            Ok(Arc::new(OllamaEmbedder::new(Arc::new(client), cfg.dim)))
+        }
+        _ => Ok(Arc::new(DeterministicEmbedder::new(cfg.dim))),
+    }
 }

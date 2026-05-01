@@ -46,6 +46,7 @@ pub struct RebuildStats {
     pub errors: usize,
 }
 
+#[derive(Clone)]
 pub struct Index {
     pub(crate) pool: Pool<SqliteConnectionManager>,
 }
@@ -104,11 +105,12 @@ impl Index {
             conn.execute_batch(
                 "PRAGMA journal_mode=WAL;\
                  PRAGMA foreign_keys=ON;\
-                 PRAGMA synchronous=NORMAL;",
+                 PRAGMA synchronous=NORMAL;\
+                 PRAGMA busy_timeout=60000;",
             )
         });
 
-        let pool = Pool::builder().max_size(1).build(manager)?;
+        let pool = Pool::builder().max_size(16).build(manager)?;
         let index = Self { pool };
         index.run_migrations()?;
         Ok(index)

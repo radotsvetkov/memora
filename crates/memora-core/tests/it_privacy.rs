@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -59,10 +60,9 @@ fn make_note(id: &str, body: &str) -> Note {
     }
 }
 
-fn make_claim_extractor(canned_response: String) -> ClaimExtractor<'static> {
-    let llm = Box::leak(Box::new(MockExtractorLlm { canned_response }));
+fn make_claim_extractor(canned_response: String) -> ClaimExtractor {
     ClaimExtractor {
-        llm,
+        llm: Arc::new(MockExtractorLlm { canned_response }),
         model_label: "test/privacy".to_string(),
     }
 }

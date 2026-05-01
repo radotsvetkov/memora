@@ -724,17 +724,17 @@ fn parse_privacy(raw: Option<&str>) -> Result<Privacy> {
     }
 }
 
-fn build_llm(provider: LlmProvider, model: Option<String>) -> Result<Box<dyn LlmClient>> {
+fn build_llm(provider: LlmProvider, model: Option<String>) -> Result<Arc<dyn LlmClient>> {
     let allow_network = std::env::var("MEMORA_ENABLE_NETWORK_LLM")
         .map(|v| v == "1")
         .unwrap_or(false);
     if allow_network {
-        match make_client(provider, model) {
+        match make_client(provider, model, None, None) {
             Ok(client) => Ok(client),
-            Err(_) => Ok(Box::new(FallbackLlm)),
+            Err(_) => Ok(Arc::new(FallbackLlm)),
         }
     } else {
-        Ok(Box::new(FallbackLlm))
+        Ok(Arc::new(FallbackLlm))
     }
 }
 

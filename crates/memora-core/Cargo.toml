@@ -22,6 +22,7 @@ pulldown-cmark.workspace = true
 walkdir.workspace = true
 notify.workspace = true
 regex.workspace = true
+futures.workspace = true
 blake3.workspace = true
 rusqlite.workspace = true
 r2d2.workspace = true

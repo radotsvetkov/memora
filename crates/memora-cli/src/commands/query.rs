@@ -23,7 +23,7 @@ pub async fn run(args: QueryArgs) -> Result<()> {
     let cfg = AppConfig::load(&args.vault)?;
     let index = open_index(&args.vault)?;
     let vector_index = open_vector(&args.vault, &cfg.embed)?;
-    let embedder = build_embedder(&cfg.embed);
+    let embedder = build_embedder(&cfg.embed, &cfg.llm)?;
     let store = ClaimStore::new(&index);
     let validator = CitationValidator {
         store: &store,
@@ -53,6 +53,8 @@ pub async fn run(args: QueryArgs) -> Result<()> {
     let llm = make_client(
         provider_from_string(&cfg.llm.provider),
         cfg.llm.model.clone(),
+        cfg.llm.endpoint.clone(),
+        cfg.llm.embedding_model.clone(),
     )?;
     let pipeline = AnsweringPipeline {
         retriever: &retriever,

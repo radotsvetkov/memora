@@ -1,5 +1,5 @@
 use std::fmt::{Display, Formatter};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -141,22 +141,53 @@ pub trait LlmClient: Send + Sync {
 
     /// Return where this client sends prompts.
     fn destination(&self) -> LlmDestination;
+
+    /// Structured JSON output (`json_mode`); passes `schema_hint` as optional system instruction.
+    async fn chat_json(
+        &self,
+        prompt: &str,
+        schema_hint: Option<&str>,
+        max_tokens: u32,
+        temperature: f32,
+    ) -> Result<String, LlmError> {
+        let resp = self
+            .complete(CompletionRequest {
+                model: None,
+                system: schema_hint.map(|s| s.to_string()),
+                messages: vec![Message {
+                    role: Role::User,
+                    content: prompt.to_string(),
+                }],
+                max_tokens,
+                temperature,
+                json_mode: true,
+            })
+            .await?;
+        Ok(resp.text)
+    }
 }
 
-/// Construct a boxed provider client with provider defaults.
+/// Construct a shared provider client with provider defaults.
+///
+/// For Ollama, pass `ollama_endpoint` / `ollama_embedding_model` from config (`None` uses env /
+/// defaults).
 pub fn make_client(
     provider: LlmProvider,
     model: Option<String>,
-) -> Result<Box<dyn LlmClient>, LlmError> {
+    ollama_endpoint: Option<String>,
+    ollama_embedding_model: Option<String>,
+) -> Result<Arc<dyn LlmClient>, LlmError> {
     match provider {
-        LlmProvider::Anthropic => Ok(Box::new(AnthropicClient::new(
+        LlmProvider::Anthropic => Ok(Arc::new(AnthropicClient::new(
             model.or_else(|| Some("claude-sonnet-4-6".to_string())),
         )?)),
-        LlmProvider::OpenAi => Ok(Box::new(OpenAiClient::new(
+        LlmProvider::OpenAi => Ok(Arc::new(OpenAiClient::new(
             model.or_else(|| Some("gpt-4o-mini".to_string())),
         )?)),
-        LlmProvider::Ollama => Ok(Box::new(OllamaClient::new(
+        LlmProvider::Ollama => Ok(Arc::new(OllamaClient::new(
             model.or_else(|| Some("llama3.1:8b".to_string())),
+            ollama_endpoint,
+            ollama_embedding_model,
         )?)),
     }
 }

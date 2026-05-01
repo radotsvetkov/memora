@@ -28,7 +28,7 @@ pub use claims::{
 };
 pub use config::PrivacyConfig;
 pub use consolidate::{AtlasWriter, WorldMapWriter};
-pub use embed::{normalize_text, Embedder, OpenAiEmbedder};
+pub use embed::{normalize_text, Embedder, OllamaEmbedder, OpenAiEmbedder};
 pub use index::{Index, IndexError, NoteRow, RebuildStats, VectorIndex};
 pub use learn::QValueLearner;
 pub use note::{Frontmatter, Note, NoteSource, ParseError, Privacy};

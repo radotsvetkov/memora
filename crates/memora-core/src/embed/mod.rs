@@ -3,8 +3,10 @@ use async_trait::async_trait;
 
 #[cfg(feature = "local-embed")]
 pub mod local;
+pub mod ollama;
 pub mod openai;
 
+pub use ollama::OllamaEmbedder;
 pub use openai::OpenAiEmbedder;
 
 #[async_trait]

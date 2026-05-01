@@ -103,6 +103,19 @@ impl LlmClient for MockClaimsLlm {
                 .get(note_id)
                 .cloned()
                 .unwrap_or_else(|| "[]".to_string())
+        } else if req.json_mode && prompt.contains("\"equivalent\"") {
+            let a = prompt
+                .lines()
+                .find_map(|line| line.strip_prefix("Predicate A: "))
+                .unwrap_or_default();
+            let b = prompt
+                .lines()
+                .find_map(|line| line.strip_prefix("Predicate B: "))
+                .unwrap_or_default();
+            let equiv = self.equivalent_pairs.contains(&canonical_pair(a, b));
+            format!(r#"{{"equivalent":{equiv}}}"#)
+        } else if req.json_mode && prompt.contains("\"contradicts\"") {
+            format!(r#"{{"contradicts":{}}}"#, self.contradiction_yes)
         } else if prompt.contains("Are these two predicates synonymous") {
             let a = prompt
                 .lines()
@@ -159,7 +172,7 @@ fn make_claim_json(
 fn build_indexer<'a>(
     vault: &'a Vault,
     index: &'a Index,
-    llm: &'a dyn LlmClient,
+    llm: Arc<dyn LlmClient>,
     vectors_root: &Path,
 ) -> Result<Indexer<'a>> {
     let embedder: Arc<dyn Embedder> = Arc::new(OneDimEmbedder);
@@ -168,8 +181,7 @@ fn build_indexer<'a>(
         llm,
         model_label: "test/mock-claims".to_string(),
     };
-    Ok(Indexer::new(vault, index, embedder, vector_index)
-        .with_claims(claim_extractor, ClaimStore::new(index)))
+    Ok(Indexer::new(vault, index, embedder, vector_index).with_claims(claim_extractor))
 }
 
 #[tokio::test]
@@ -205,14 +217,18 @@ async fn conflicting_claims_mark_older_valid_until_and_relations() -> Result<()>
         "note-new".to_string(),
         make_claim_json("Rado", "role_is", "manager", 0, new_body.len()),
     );
-    let llm = MockClaimsLlm::new(extraction_responses, HashSet::new(), true);
+    let llm = Arc::new(MockClaimsLlm::new(
+        extraction_responses,
+        HashSet::new(),
+        true,
+    ));
 
     let index = Index::open(&temp.path().join("index").join("memora.db"))?;
     let vault = Vault::new(&vault_root);
     let indexer = build_indexer(
         &vault,
         &index,
-        &llm,
+        llm,
         &temp.path().join("index").join("vectors"),
     )?;
     indexer.full_rebuild().await?;
@@ -269,14 +285,18 @@ async fn note_edit_marks_derived_claims_as_stale() -> Result<()> {
         make_claim_json("Project alpha", "status_is", "green", 0, body_a.len()),
     );
     extraction_responses.insert("note-derived".to_string(), "[]".to_string());
-    let llm = MockClaimsLlm::new(extraction_responses, HashSet::new(), false);
+    let llm = Arc::new(MockClaimsLlm::new(
+        extraction_responses,
+        HashSet::new(),
+        false,
+    ));
 
     let index = Index::open(&temp.path().join("index").join("memora.db"))?;
     let vault = Vault::new(&vault_root);
     let indexer = build_indexer(
         &vault,
         &index,
-        &llm,
+        llm,
         &temp.path().join("index").join("vectors"),
     )?;
     indexer.full_rebuild().await?;
@@ -367,14 +387,18 @@ async fn equivalent_predicates_use_llm_synonym_check_for_contradictions() -> Res
     );
     let mut equivalent_pairs = HashSet::new();
     equivalent_pairs.insert(canonical_pair("hq_city", "based_in_city"));
-    let llm = MockClaimsLlm::new(extraction_responses, equivalent_pairs, true);
+    let llm = Arc::new(MockClaimsLlm::new(
+        extraction_responses,
+        equivalent_pairs,
+        true,
+    ));
 
     let index = Index::open(&temp.path().join("index").join("memora.db"))?;
     let vault = Vault::new(&vault_root);
     let indexer = build_indexer(
         &vault,
         &index,
-        &llm,
+        llm,
         &temp.path().join("index").join("vectors"),
     )?;
     indexer.full_rebuild().await?;
@@ -432,14 +456,18 @@ async fn reindex_is_idempotent_for_contradictions_and_stale_rows() -> Result<()>
         "idem-new".to_string(),
         make_claim_json("Roadmap", "status_is", "approved", 0, new_body.len()),
     );
-    let llm = MockClaimsLlm::new(extraction_responses, HashSet::new(), true);
+    let llm = Arc::new(MockClaimsLlm::new(
+        extraction_responses,
+        HashSet::new(),
+        true,
+    ));
 
     let index = Index::open(&temp.path().join("index").join("memora.db"))?;
     let vault = Vault::new(&vault_root);
     let indexer = build_indexer(
         &vault,
         &index,
-        &llm,
+        llm,
         &temp.path().join("index").join("vectors"),
     )?;
 
@@ -458,5 +486,76 @@ async fn reindex_is_idempotent_for_contradictions_and_stale_rows() -> Result<()>
     assert_eq!(second_contradictions, first_contradictions);
     assert_eq!(first_stale, 0);
     assert_eq!(second_stale, first_stale);
+    Ok(())
+}
+
+#[tokio::test]
+async fn skip_contradiction_detection_skips_contradiction_edges() -> Result<()> {
+    let temp = tempdir()?;
+    let vault_root = temp.path().join("vault");
+    let note_old_path = vault_root.join("skip-old.md");
+    let note_new_path = vault_root.join("skip-new.md");
+
+    let old_body = "Rado role is engineer at ACME.";
+    let new_body = "Rado role is manager at ACME.";
+    write_note(
+        &note_old_path,
+        "skip-old",
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+        old_body,
+    )?;
+    write_note(
+        &note_new_path,
+        "skip-new",
+        "2026-02-01T00:00:00Z",
+        "2026-02-01T00:00:00Z",
+        new_body,
+    )?;
+
+    let mut extraction_responses = HashMap::new();
+    extraction_responses.insert(
+        "skip-old".to_string(),
+        make_claim_json("Rado", "role_is", "engineer", 0, old_body.len()),
+    );
+    extraction_responses.insert(
+        "skip-new".to_string(),
+        make_claim_json("Rado", "role_is", "manager", 0, new_body.len()),
+    );
+    let llm = Arc::new(MockClaimsLlm::new(
+        extraction_responses,
+        HashSet::new(),
+        true,
+    ));
+
+    let index = Index::open(&temp.path().join("index").join("memora.db"))?;
+    let vault = Vault::new(&vault_root);
+    let indexer = build_indexer(
+        &vault,
+        &index,
+        llm,
+        &temp.path().join("index").join("vectors"),
+    )?
+    .with_skip_contradiction_detection(true);
+    indexer.full_rebuild().await?;
+
+    let store = ClaimStore::new(&index);
+    let newer_id = store
+        .list_for_note("skip-new")?
+        .into_iter()
+        .next()
+        .expect("newer claim")
+        .id;
+    let older_id = store
+        .list_for_note("skip-old")?
+        .into_iter()
+        .next()
+        .expect("older claim")
+        .id;
+
+    assert!(
+        !store.has_relation(&newer_id, &older_id, ClaimRelation::Contradicts)?,
+        "contradiction edges should not be written when skip_contradiction_detection is enabled"
+    );
     Ok(())
 }
