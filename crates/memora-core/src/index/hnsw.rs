@@ -30,46 +30,38 @@ impl VectorIndex {
                 .with_context(|| format!("create vector index dir {}", parent.display()))?;
         }
 
+        Self::cleanup_stale_tmp_artifacts(path)?;
         let bin_path = Self::bin_path(path);
-        if bin_path.exists() {
-            let bytes = fs::read(&bin_path)
-                .with_context(|| format!("read vector metadata {}", bin_path.display()))?;
-            let persisted: PersistedVectorIndex =
-                bincode::deserialize(&bytes).context("deserialize vector index metadata")?;
-            if persisted.dim != dim {
-                bail!(
-                    "vector index dim mismatch for {}: on disk {}, requested {}",
-                    path.display(),
-                    persisted.dim,
-                    dim
-                );
+        let graph_path = Self::hnsw_graph_path(path)?;
+        let data_path = Self::hnsw_data_path(path)?;
+        let has_bin = bin_path.exists();
+        let has_graph = graph_path.exists();
+        let has_data = data_path.exists();
+
+        if has_bin && has_graph && has_data {
+            match Self::try_load(path, dim, &bin_path) {
+                Ok(index) => return Ok(index),
+                Err(error) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %error,
+                        "failed to load persisted vector index; rebuilding from empty"
+                    );
+                    Self::cleanup_all_index_artifacts(path)?;
+                }
             }
-            let hnsw = Self::load_hnsw(path)?;
-            return Ok(Self {
-                hnsw,
-                id_to_idx: persisted.id_to_idx,
-                idx_to_id: persisted.idx_to_id,
-                dim,
-                path: path.to_path_buf(),
-                dirty: false,
-            });
+        } else if has_bin || has_graph || has_data {
+            tracing::warn!(
+                path = %path.display(),
+                has_bin,
+                has_graph,
+                has_data,
+                "partial vector index state detected; removing artifacts and rebuilding from empty"
+            );
+            Self::cleanup_all_index_artifacts(path)?;
         }
 
-        let hnsw = Hnsw::new(
-            DEFAULT_MAX_CONNECTIONS,
-            DEFAULT_MAX_ELEMENTS_HINT,
-            DEFAULT_MAX_LAYER,
-            DEFAULT_EF_CONSTRUCTION,
-            DistCosine {},
-        );
-        Ok(Self {
-            hnsw,
-            id_to_idx: HashMap::new(),
-            idx_to_id: Vec::new(),
-            dim,
-            path: path.to_path_buf(),
-            dirty: true,
-        })
+        Ok(Self::new_empty(path, dim, false))
     }
 
     pub fn upsert(&mut self, id: &str, vec: &[f32]) -> Result<()> {
@@ -138,43 +130,38 @@ impl VectorIndex {
             idx_to_id: self.idx_to_id.clone(),
             dim: self.dim,
         };
+        if self.hnsw.get_nb_point() == 0 {
+            Self::cleanup_all_index_artifacts(&self.path)?;
+            self.dirty = false;
+            return Ok(());
+        }
+
         let encoded = bincode::serialize(&persisted).context("serialize vector index metadata")?;
         let bin_path = Self::bin_path(&self.path);
-        let bin_tmp = PathBuf::from(format!("{}.tmp", bin_path.display()));
-        fs::write(&bin_tmp, encoded)
-            .with_context(|| format!("write vector metadata {}", bin_tmp.display()))?;
-        fs::rename(&bin_tmp, &bin_path).with_context(|| {
-            format!(
-                "atomically replace vector metadata {} -> {}",
-                bin_tmp.display(),
-                bin_path.display()
-            )
-        })?;
-
         let (dir, final_basename) = Self::hnsw_dir_and_basename(&self.path)?;
+        let bin_tmp = Self::tmp_path(&bin_path);
         let tmp_basename = format!("{final_basename}.tmp");
-        self.hnsw
-            .file_dump(&dir, &tmp_basename)
-            .with_context(|| format!("dump hnsw graph {}", self.path.display()))?;
-
         let final_graph = dir.join(format!("{final_basename}.hnsw.graph"));
         let final_data = dir.join(format!("{final_basename}.hnsw.data"));
         let tmp_graph = dir.join(format!("{tmp_basename}.hnsw.graph"));
         let tmp_data = dir.join(format!("{tmp_basename}.hnsw.data"));
-        fs::rename(&tmp_graph, &final_graph).with_context(|| {
-            format!(
-                "atomically replace hnsw graph {} -> {}",
-                tmp_graph.display(),
-                final_graph.display()
-            )
-        })?;
-        fs::rename(&tmp_data, &final_data).with_context(|| {
-            format!(
-                "atomically replace hnsw data {} -> {}",
-                tmp_data.display(),
-                final_data.display()
-            )
-        })?;
+        let save_result = (|| -> Result<()> {
+            fs::write(&bin_tmp, encoded)
+                .with_context(|| format!("write vector metadata {}", bin_tmp.display()))?;
+            self.hnsw
+                .file_dump(&dir, &tmp_basename)
+                .with_context(|| format!("dump hnsw graph {}", self.path.display()))?;
+            Self::replace_file(&tmp_graph, &final_graph)?;
+            Self::replace_file(&tmp_data, &final_data)?;
+            Self::replace_file(&bin_tmp, &bin_path)?;
+            Ok(())
+        })();
+        if let Err(error) = save_result {
+            Self::remove_if_exists(&bin_tmp)?;
+            Self::remove_if_exists(&tmp_graph)?;
+            Self::remove_if_exists(&tmp_data)?;
+            return Err(error);
+        }
 
         self.dirty = false;
         Ok(())
@@ -207,8 +194,64 @@ impl VectorIndex {
             .with_context(|| format!("load hnsw graph for {}", path.display()))
     }
 
+    fn try_load(path: &Path, dim: usize, bin_path: &Path) -> Result<Self> {
+        let bytes = fs::read(bin_path)
+            .with_context(|| format!("read vector metadata {}", bin_path.display()))?;
+        let persisted: PersistedVectorIndex =
+            bincode::deserialize(&bytes).context("deserialize vector index metadata")?;
+        if persisted.dim != dim {
+            bail!(
+                "vector index dim mismatch for {}: on disk {}, requested {}",
+                path.display(),
+                persisted.dim,
+                dim
+            );
+        }
+        let hnsw = Self::load_hnsw(path)?;
+        Ok(Self {
+            hnsw,
+            id_to_idx: persisted.id_to_idx,
+            idx_to_id: persisted.idx_to_id,
+            dim,
+            path: path.to_path_buf(),
+            dirty: false,
+        })
+    }
+
+    fn new_empty(path: &Path, dim: usize, dirty: bool) -> Self {
+        let hnsw = Hnsw::new(
+            DEFAULT_MAX_CONNECTIONS,
+            DEFAULT_MAX_ELEMENTS_HINT,
+            DEFAULT_MAX_LAYER,
+            DEFAULT_EF_CONSTRUCTION,
+            DistCosine {},
+        );
+        Self {
+            hnsw,
+            id_to_idx: HashMap::new(),
+            idx_to_id: Vec::new(),
+            dim,
+            path: path.to_path_buf(),
+            dirty,
+        }
+    }
+
     fn bin_path(path: &Path) -> PathBuf {
         PathBuf::from(format!("{}.bin", path.display()))
+    }
+
+    fn tmp_path(path: &Path) -> PathBuf {
+        PathBuf::from(format!("{}.tmp", path.display()))
+    }
+
+    fn hnsw_graph_path(path: &Path) -> Result<PathBuf> {
+        let (dir, basename) = Self::hnsw_dir_and_basename(path)?;
+        Ok(dir.join(format!("{basename}.hnsw.graph")))
+    }
+
+    fn hnsw_data_path(path: &Path) -> Result<PathBuf> {
+        let (dir, basename) = Self::hnsw_dir_and_basename(path)?;
+        Ok(dir.join(format!("{basename}.hnsw.data")))
     }
 
     fn hnsw_dir_and_basename(path: &Path) -> Result<(PathBuf, String)> {
@@ -221,6 +264,63 @@ impl VectorIndex {
         };
         Ok((dir, file_name.to_string()))
     }
+
+    fn remove_if_exists(path: &Path) -> Result<()> {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error).with_context(|| format!("remove file {}", path.display())),
+        }
+    }
+
+    fn replace_file(src: &Path, dst: &Path) -> Result<()> {
+        Self::remove_if_exists(dst)?;
+        fs::rename(src, dst)
+            .with_context(|| format!("atomically replace {} -> {}", src.display(), dst.display()))
+    }
+
+    fn cleanup_all_index_artifacts(path: &Path) -> Result<()> {
+        let bin = Self::bin_path(path);
+        let bin_tmp = Self::tmp_path(&bin);
+        let graph = Self::hnsw_graph_path(path)?;
+        let data = Self::hnsw_data_path(path)?;
+        let (dir, basename) = Self::hnsw_dir_and_basename(path)?;
+        let tmp_graph = dir.join(format!("{basename}.tmp.hnsw.graph"));
+        let tmp_data = dir.join(format!("{basename}.tmp.hnsw.data"));
+        Self::remove_if_exists(&bin)?;
+        Self::remove_if_exists(&bin_tmp)?;
+        Self::remove_if_exists(&graph)?;
+        Self::remove_if_exists(&data)?;
+        Self::remove_if_exists(&tmp_graph)?;
+        Self::remove_if_exists(&tmp_data)?;
+        Ok(())
+    }
+
+    fn cleanup_stale_tmp_artifacts(path: &Path) -> Result<()> {
+        let parent = path.parent().unwrap_or(Path::new("."));
+        let basename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        for entry in fs::read_dir(parent)
+            .with_context(|| format!("scan vector index directory {}", parent.display()))?
+        {
+            let entry = entry.with_context(|| format!("read entry in {}", parent.display()))?;
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            let matches = name_str.ends_with(".tmp")
+                || name_str.contains(".tmp.hnsw.")
+                || name_str.starts_with(&format!("{basename}.tmp"));
+            if matches {
+                let file_path = entry.path();
+                if file_path.is_file() {
+                    Self::remove_if_exists(&file_path)?;
+                    tracing::warn!(
+                        path = %file_path.display(),
+                        "removed stale temp artifact from prior failed save"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -232,6 +332,8 @@ struct PersistedVectorIndex {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use anyhow::Result;
     use rand::{rngs::StdRng, Rng, SeedableRng};
     use tempfile::tempdir;
@@ -276,6 +378,86 @@ mod tests {
         let results_new = index.search(&new, 1)?;
         assert_eq!(results_new[0].0, "a");
         assert!(results_new[0].1 > 0.99);
+        Ok(())
+    }
+
+    #[test]
+    fn save_then_load_roundtrip() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("vectors");
+        let mut index = VectorIndex::open_or_create(&path, 32)?;
+        let mut rng = StdRng::seed_from_u64(7);
+        let mut vectors = Vec::new();
+        for i in 0..100usize {
+            let vec = (0..32)
+                .map(|_| rng.gen_range(-1.0..1.0))
+                .collect::<Vec<f32>>();
+            index.upsert(&format!("id-{i}"), &vec)?;
+            vectors.push(vec);
+        }
+        let expected = index.search(&vectors[18], 5)?;
+        index.save()?;
+        drop(index);
+
+        let loaded = VectorIndex::open_or_create(&path, 32)?;
+        let actual = loaded.search(&vectors[18], 5)?;
+        assert_eq!(expected, actual);
+        Ok(())
+    }
+
+    #[test]
+    fn save_recovers_from_stale_tmp_files() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("vectors");
+        fs::write(temp.path().join("vectors.tmp"), b"stale")?;
+        fs::write(temp.path().join("vectors.tmp.hnsw.graph"), b"stale")?;
+        fs::write(temp.path().join("vectors.tmp.hnsw.data"), b"stale")?;
+
+        let _index = VectorIndex::open_or_create(&path, 8)?;
+        assert!(!temp.path().join("vectors.tmp").exists());
+        assert!(!temp.path().join("vectors.tmp.hnsw.graph").exists());
+        assert!(!temp.path().join("vectors.tmp.hnsw.data").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn load_recovers_from_partial_state() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("vectors");
+        let mut index = VectorIndex::open_or_create(&path, 16)?;
+        let vec = vec![0.5; 16];
+        index.upsert("a", &vec)?;
+        index.save()?;
+        fs::remove_file(temp.path().join("vectors.hnsw.graph"))?;
+        fs::remove_file(temp.path().join("vectors.hnsw.data"))?;
+
+        let recovered = VectorIndex::open_or_create(&path, 16)?;
+        let results = recovered.search(&vec, 3)?;
+        assert!(results.is_empty());
+        assert!(!temp.path().join("vectors.bin").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn save_atomic_failure_does_not_corrupt() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("vectors");
+        let mut index = VectorIndex::open_or_create(&path, 8)?;
+        let vec = vec![0.3; 8];
+        index.upsert("seed", &vec)?;
+        index.save()?;
+        fs::remove_file(temp.path().join("vectors.hnsw.graph"))?;
+        fs::remove_file(temp.path().join("vectors.hnsw.data"))?;
+
+        let mut partial = VectorIndex::open_or_create(&path, 8)?;
+        partial.save()?;
+        assert!(!temp.path().join("vectors.bin").exists());
+        assert!(!temp.path().join("vectors.tmp.hnsw.graph").exists());
+        assert!(!temp.path().join("vectors.tmp.hnsw.data").exists());
+
+        let recovered = VectorIndex::open_or_create(&path, 8)?;
+        let results = recovered.search(&vec, 3)?;
+        assert!(results.is_empty());
         Ok(())
     }
 }
