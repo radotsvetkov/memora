@@ -248,13 +248,21 @@ impl<'a> Challenger<'a> {
         let mut alerts = Vec::new();
         for candidate in candidates {
             let question_prompt = format!(
-                "Generate one short clarifying question for this uncertain claim:\n\
-                 '{} {} {}' (confidence {}, predicate occurrences {}).",
+                "A vault has this single uncertain claim: subject={}, predicate={}, \
+                 object={} (confidence={:.2}, predicate appears in {} other claims).\n\
+                 \n\
+                 Generate one specific factual question whose answer would either \
+                 confirm this claim or extend the user's knowledge of the topic. \
+                 Output only the question, max 120 characters. Do not quote the \
+                 claim back. Do not ask about wording or interpretation.\n\
+                 \n\
+                 GOOD example: 'When did the Q1 launch decision take effect?'\n\
+                 BAD example: 'Is the note indicating that X has been initialized?'",
                 candidate.subject,
                 candidate.predicate,
                 candidate.object,
                 candidate.confidence,
-                candidate.predicate_occurrences
+                candidate.predicate_occurrences,
             );
             let question = self
                 .llm
@@ -265,7 +273,7 @@ impl<'a> Challenger<'a> {
                         role: Role::User,
                         content: question_prompt,
                     }],
-                    max_tokens: 48,
+                    max_tokens: 80,
                     temperature: 0.1,
                     json_mode: false,
                 })

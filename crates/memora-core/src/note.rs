@@ -604,16 +604,35 @@ fn infer_region(path: &Path, vault_root: &Path) -> Result<String, ParseError> {
     Ok(derive_region_from_path(path, vault_root))
 }
 
+/// Folder segments treated as Obsidian/OS placeholders, not user-defined regions.
+pub const PLACEHOLDER_FOLDER_NAMES: &[&str] = &[
+    "Untitled",
+    "untitled",
+    "New folder",
+    "new folder",
+    "Untitled Folder",
+    "Untitled 1",
+    "Untitled 2",
+    "Untitled 3",
+];
+
 /// Derive a note region from its folder path relative to the vault root.
 pub fn derive_region_from_path(path: &Path, vault_root: &Path) -> String {
     let rel = path.strip_prefix(vault_root).unwrap_or(path);
     let parent = rel.parent();
     match parent {
-        Some(p) if !p.as_os_str().is_empty() => p
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join("/"),
+        Some(p) if !p.as_os_str().is_empty() => {
+            let segments = p
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy().to_string())
+                .filter(|seg| !PLACEHOLDER_FOLDER_NAMES.iter().any(|ph| ph == seg))
+                .collect::<Vec<_>>();
+            if segments.is_empty() {
+                "default".to_string()
+            } else {
+                segments.join("/")
+            }
+        }
         _ => "default".to_string(),
     }
 }
@@ -949,6 +968,33 @@ Body
         );
         assert_eq!(
             derive_region_from_path(Path::new("/vault/note.md"), vault_root),
+            "default"
+        );
+    }
+
+    #[test]
+    fn derive_region_from_path_filters_untitled() {
+        let vault_root = Path::new("/vault");
+        assert_eq!(
+            derive_region_from_path(Path::new("/vault/work/Untitled/note.md"), vault_root),
+            "work"
+        );
+    }
+
+    #[test]
+    fn derive_region_from_path_filters_new_folder() {
+        let vault_root = Path::new("/vault");
+        assert_eq!(
+            derive_region_from_path(Path::new("/vault/proj/New folder/note.md"), vault_root),
+            "proj"
+        );
+    }
+
+    #[test]
+    fn derive_region_from_path_returns_default_when_all_filtered() {
+        let vault_root = Path::new("/vault");
+        assert_eq!(
+            derive_region_from_path(Path::new("/vault/Untitled/New folder/note.md"), vault_root),
             "default"
         );
     }
