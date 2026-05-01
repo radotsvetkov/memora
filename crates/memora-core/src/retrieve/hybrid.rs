@@ -68,7 +68,12 @@ impl<'a> HybridRetriever<'a> {
             })
             .collect::<Vec<_>>();
 
-        fused.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
+        fused.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.id.cmp(&b.id))
+        });
         fused.truncate(k);
         Ok(fused)
     }
@@ -86,7 +91,12 @@ impl<'a> HybridRetriever<'a> {
             let qvalue = self.index.qvalue(&hit.id)?.unwrap_or(0.0);
             hit.score += 0.1 * qvalue;
         }
-        expanded.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
+        expanded.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.id.cmp(&b.id))
+        });
 
         let final_ids = expanded
             .iter()
