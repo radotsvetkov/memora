@@ -356,34 +356,58 @@ async fn upsert_note_inner(
     if let Some(extractor) = claim_extractor {
         let should_extract = extract_reference_notes || parsed.fm.source != NoteSource::Reference;
         if should_extract {
-            let claims = extractor.extract(parsed, &parsed.body).await?;
-            index.with_transaction(|tx| {
-                claim_store.delete_for_note_in_tx(tx, &parsed.fm.id)?;
-                for claim in &claims {
-                    claim_store.upsert_in_tx(tx, claim)?;
-                }
-                Ok(())
-            })?;
+            match extractor.extract(parsed, &parsed.body).await {
+                Ok(claims) => {
+                    index.with_transaction(|tx| {
+                        claim_store.delete_for_note_in_tx(tx, &parsed.fm.id)?;
+                        for claim in &claims {
+                            claim_store.upsert_in_tx(tx, claim)?;
+                        }
+                        Ok(())
+                    })?;
 
-            let provenance = Provenance::new(index);
-            let stale_tracker = StalenessTracker::new(index, &provenance);
-            stale_tracker.mark_source_edited_claims(&old_claim_ids)?;
+                    let provenance = Provenance::new(index);
+                    let stale_tracker = StalenessTracker::new(index, &provenance);
+                    stale_tracker.mark_source_edited_claims(&old_claim_ids)?;
 
-            if !skip_contradiction_detection {
-                let contradiction_detector = ContradictionDetector {
-                    store: &claim_store,
-                    stale: &stale_tracker,
-                    llm: Arc::clone(&extractor.llm),
-                };
-                for claim in &claims {
-                    let superseded = contradiction_detector.check_new_claim(claim).await?;
-                    if !superseded.is_empty() {
+                    if claims.is_empty() {
                         tracing::info!(
-                            claim_id = %claim.id,
-                            count = superseded.len(),
-                            "supersession recorded"
+                            path = %parsed.path.display(),
+                            "no claims extracted from note (model returned empty array)"
                         );
                     }
+
+                    if !skip_contradiction_detection && !claims.is_empty() {
+                        let contradiction_detector = ContradictionDetector {
+                            store: &claim_store,
+                            stale: &stale_tracker,
+                            llm: Arc::clone(&extractor.llm),
+                        };
+                        for claim in &claims {
+                            let superseded = contradiction_detector.check_new_claim(claim).await?;
+                            if !superseded.is_empty() {
+                                tracing::info!(
+                                    claim_id = %claim.id,
+                                    count = superseded.len(),
+                                    "supersession recorded"
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %parsed.path.display(),
+                        error = %e,
+                        "claim extraction failed; note indexed without claims"
+                    );
+                    index.with_transaction(|tx| {
+                        claim_store.delete_for_note_in_tx(tx, &parsed.fm.id)?;
+                        Ok(())
+                    })?;
+                    let provenance = Provenance::new(index);
+                    let stale_tracker = StalenessTracker::new(index, &provenance);
+                    stale_tracker.mark_source_edited_claims(&old_claim_ids)?;
                 }
             }
         }

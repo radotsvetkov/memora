@@ -94,7 +94,7 @@ impl LlmClient for MockClaimsLlm {
             .map(|msg| msg.content.as_str())
             .unwrap_or_default();
 
-        let text = if prompt.contains("You extract atomic factual CLAIMS") {
+        let text = if prompt.contains("You extract atomic factual claims from a note") {
             let note_id = prompt
                 .lines()
                 .find_map(|line| line.strip_prefix("Note id: "))

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Utc};
-use regex::Regex;
+use serde::Deserialize;
 use serde_json::Value;
 
 use memora_llm::LlmClient;
@@ -11,31 +11,79 @@ use crate::claims::privacy_markers::{parse_privacy_spans, privacy_for_span};
 use crate::claims::Claim;
 use crate::note::Note;
 
-pub const EXTRACTION_PROMPT_TEMPLATE: &str = r#"You extract atomic factual CLAIMS from a personal note. Output a JSON array only.
-No prose. No markdown fences. No commentary.
+pub const EXTRACTION_PROMPT_TEMPLATE: &str = r#"You extract atomic factual claims from a note as JSON.
 
-A claim is one minimal statement of fact about a subject. Break compound
-sentences into individual claims.
+OUTPUT FORMAT — return only a JSON array (no prose, no markdown):
 
-For each claim return these fields:
-- s: subject (entity, project, person, concept) — short noun phrase
-- p: predicate (relation between subject and object) — snake_case verb phrase
-- o: object (value, description, or another entity) — short
-- span_start: byte offset where the supporting text begins, in the note body
-- span_end: byte offset where the supporting text ends, in the note body
-- valid_from: ISO datetime if explicitly stated for this claim, otherwise null
-- valid_until: ISO datetime if explicitly stated as ended/changed, otherwise null
-- confidence: 0.0–1.0. Definite fact = 1.0. "I think/maybe" = 0.5. Speculation = 0.3.
+[
+  {
+    "subject": "<entity, lowercase, hyphenated if multi-word>",
+    "predicate": "<verb_or_relation, lowercase, snake_case>",
+    "object": "<entity or value, lowercase>",
+    "span_start": <byte offset where claim source begins>,
+    "span_end": <byte offset where claim source ends>,
+    "valid_from": "<ISO 8601 datetime or null>",
+    "valid_until": "<ISO 8601 datetime or null>",
+    "confidence": <0.0 to 1.0>
+  }
+]
 
-DO NOT:
-- Invent claims not literally supported by the text.
-- Combine multiple facts into one claim.
-- Paraphrase in ways that change meaning.
-- Include sentences as claims; extract the proposition only.
-- Use "..." or "[redacted]" as field values.
+RULES:
+- Return at most 8 claims per call.
+- Return [] if the note has no extractable atomic claims (too short,
+  too vague, only narrative).
+- Each claim must be a single atomic fact. Compound facts split
+  into multiple claims.
+- Span offsets refer to byte ranges in the note BODY (not frontmatter).
+- Output only the JSON array. No code fences. No commentary.
 
-The byte offsets must point to the smallest contiguous span of the body that
-supports the claim.
+GOOD example:
+
+Input note body:
+  "We decided on Postgres for the user store on 2026-04-15.
+  Earlier we'd considered MongoDB but ruled it out due to schema drift."
+
+Output:
+  [
+    {
+      "subject": "user-store",
+      "predicate": "uses_database",
+      "object": "postgres",
+      "span_start": 21,
+      "span_end": 29,
+      "valid_from": "2026-04-15T00:00:00Z",
+      "valid_until": null,
+      "confidence": 0.95
+    },
+    {
+      "subject": "mongodb",
+      "predicate": "rejected_for",
+      "object": "user-store",
+      "span_start": 80,
+      "span_end": 87,
+      "valid_from": null,
+      "valid_until": null,
+      "confidence": 0.85
+    }
+  ]
+
+BAD examples — do NOT produce these:
+
+Bare single object: {"subject": "x", ...}
+  (Must be wrapped in an array.)
+
+Code fence: ```json
+[...]
+```
+  (Output the array directly without code fences.)
+
+Prose: "Here are the claims I extracted: [...]"
+  (No commentary. JSON only.)
+
+Empty fields: {"subject": "x", "predicate": "is", "object": ""}
+  (If the object would be empty, the claim is not atomic; skip it.)
+
+- Never use JSON null for subject, predicate, or object. Omit the claim instead.
 
 Note id: {{NOTE_ID}}
 Note source: {{NOTE_SOURCE}}
@@ -45,6 +93,26 @@ Note body (with byte offsets visible as comments at every line start):
 {{NOTE_BODY_WITH_OFFSETS}}
 
 OUTPUT JSON ARRAY ONLY."#;
+
+/// Single claim record as returned by the LLM (before privacy / fingerprint).
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct LlmClaimRecord {
+    /// Local models sometimes emit JSON `null` here; treat as missing and discard in validation.
+    #[serde(default, alias = "s")]
+    pub subject: Option<String>,
+    #[serde(default, alias = "p")]
+    pub predicate: Option<String>,
+    #[serde(default, alias = "o")]
+    pub object: Option<String>,
+    pub span_start: i64,
+    pub span_end: i64,
+    #[serde(default)]
+    pub valid_from: Option<Value>,
+    #[serde(default)]
+    pub valid_until: Option<Value>,
+    #[serde(default)]
+    pub confidence: Option<f64>,
+}
 
 #[derive(Clone)]
 pub struct ClaimExtractor {
@@ -56,32 +124,34 @@ impl ClaimExtractor {
     pub async fn extract(&self, note: &Note, body: &str) -> Result<Vec<Claim>> {
         let marker_spans = parse_privacy_spans(body);
         let prompt = self.render_prompt(note, body);
-        let items = match self.llm.chat_json(&prompt, None, 2_000, 0.1).await {
-            Ok(text) => match parse_llm_items(&text) {
-                Ok(items) => items,
-                Err(err) => {
-                    tracing::warn!(
-                        error = %err,
-                        "claim extractor returned malformed JSON; using heuristic extraction fallback"
-                    );
-                    heuristic_items(body)
-                }
-            },
-            Err(err) => {
+        let text = self
+            .llm
+            .chat_json(&prompt, None, 2_000, 0.1)
+            .await
+            .map_err(|err| {
                 tracing::warn!(
                     error = %err,
-                    "claim extractor LLM call failed; using heuristic extraction fallback"
+                    "claim extractor LLM call failed"
                 );
-                heuristic_items(body)
-            }
-        };
+                anyhow::Error::from(err)
+            })?;
+
+        let records = parse_extraction_response(&text).map_err(|err| {
+            tracing::warn!(
+                error = %err,
+                raw_response = %text,
+                "claim extractor failed to parse JSON response"
+            );
+            err
+        })?;
+
         let mut claims = Vec::new();
 
-        for item in items {
+        for item in records.into_iter().take(8) {
             match self.build_claim_item(note, body, &marker_spans, &item) {
                 Ok(claim) => claims.push(claim),
                 Err(err) => {
-                    tracing::warn!(error = %err, item = %item, "discarding invalid extracted claim");
+                    tracing::warn!(error = %err, ?item, "discarding invalid extracted claim");
                 }
             }
         }
@@ -105,13 +175,25 @@ impl ClaimExtractor {
         note: &Note,
         body: &str,
         marker_spans: &[(usize, usize, crate::note::Privacy)],
-        item: &Value,
+        item: &LlmClaimRecord,
     ) -> Result<Claim> {
-        let subject = read_non_empty_field(item, "s")?;
-        let predicate = read_non_empty_field(item, "p")?;
-        let object = read_non_empty_field(item, "o")?;
-        let span_start = read_usize_field(item, "span_start")?;
-        let span_end = read_usize_field(item, "span_end")?;
+        let subject = non_empty_trimmed(&item.subject, "subject")?;
+        let predicate = non_empty_trimmed(&item.predicate, "predicate")?;
+        let object = non_empty_trimmed(&item.object, "object")?;
+        if subject == "..."
+            || predicate == "..."
+            || object == "..."
+            || subject == "[redacted]"
+            || predicate == "[redacted]"
+            || object == "[redacted]"
+        {
+            return Err(anyhow!("invalid placeholder field value"));
+        }
+
+        let span_start = usize::try_from(item.span_start)
+            .map_err(|_| anyhow!("span_start does not fit usize"))?;
+        let span_end =
+            usize::try_from(item.span_end).map_err(|_| anyhow!("span_end does not fit usize"))?;
 
         if span_end <= span_start {
             return Err(anyhow!("invalid span: span_end must be > span_start"));
@@ -127,13 +209,9 @@ impl ClaimExtractor {
             return Err(anyhow!("invalid span text length: {trimmed_len}"));
         }
 
-        let valid_from = parse_or_default(item.get("valid_from"), note.fm.created);
-        let valid_until = parse_optional(item.get("valid_until"));
-        let confidence = item
-            .get("confidence")
-            .and_then(Value::as_f64)
-            .map(|value| value as f32)
-            .unwrap_or(0.7);
+        let valid_from = datetime_or_default(&item.valid_from, note.fm.created);
+        let valid_until = optional_datetime(&item.valid_until);
+        let confidence = item.confidence.map(|v| v as f32).unwrap_or(0.7);
         let privacy = privacy_for_span(span_start, span_end, marker_spans, note.fm.privacy);
 
         Ok(Claim {
@@ -171,128 +249,119 @@ pub fn render_body_with_offsets(body: &str) -> String {
     out
 }
 
-fn parse_llm_items(text: &str) -> Result<Vec<Value>> {
-    let trimmed = text.trim();
-    if let Ok(items) = serde_json::from_str::<Vec<Value>>(trimmed) {
-        return Ok(items);
-    }
-
-    let re = Regex::new(r"(?s)\[.*\]").expect("array regex should compile");
-    if let Some(matched) = re.find(trimmed) {
-        if let Ok(items) = serde_json::from_str::<Vec<Value>>(matched.as_str()) {
-            return Ok(items);
-        }
-    }
-
-    tracing::debug!(
-        raw_response = text,
-        "failed to parse claim extractor response"
-    );
-    Err(anyhow!("claim extractor returned malformed JSON"))
-}
-
-fn read_non_empty_field(item: &Value, key: &str) -> Result<String> {
-    let value = item
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .ok_or_else(|| anyhow!("missing or empty field: {key}"))?;
-    if value == "..." || value == "[redacted]" {
-        return Err(anyhow!("invalid placeholder field value for: {key}"));
+fn non_empty_trimmed(opt: &Option<String>, field: &str) -> Result<String> {
+    let Some(raw) = opt else {
+        return Err(anyhow!("missing or empty field: {field}"));
+    };
+    let value = raw.trim();
+    if value.is_empty() {
+        return Err(anyhow!("missing or empty field: {field}"));
     }
     Ok(value.to_string())
 }
 
-fn read_usize_field(item: &Value, key: &str) -> Result<usize> {
-    let raw = item
-        .get(key)
-        .and_then(Value::as_i64)
-        .ok_or_else(|| anyhow!("missing numeric field: {key}"))?;
-    if raw < 0 {
-        return Err(anyhow!("field must be >= 0: {key}"));
-    }
-    usize::try_from(raw).map_err(|_| anyhow!("field does not fit usize: {key}"))
-}
-
-fn parse_or_default(value: Option<&Value>, default: DateTime<Utc>) -> DateTime<Utc> {
-    let Some(raw) = value.and_then(Value::as_str) else {
+fn datetime_or_default(value: &Option<Value>, default: DateTime<Utc>) -> DateTime<Utc> {
+    let Some(raw) = value else {
         return default;
     };
-    DateTime::parse_from_rfc3339(raw)
+    if raw.is_null() {
+        return default;
+    }
+    let Some(s) = raw.as_str() else {
+        return default;
+    };
+    DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
         .unwrap_or(default)
 }
 
-fn parse_optional(value: Option<&Value>) -> Option<DateTime<Utc>> {
-    value
-        .and_then(Value::as_str)
-        .and_then(|raw| DateTime::parse_from_rfc3339(raw).ok())
+fn optional_datetime(value: &Option<Value>) -> Option<DateTime<Utc>> {
+    let Some(raw) = value else {
+        return None;
+    };
+    if raw.is_null() {
+        return None;
+    }
+    raw.as_str()
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&Utc))
 }
 
-fn heuristic_items(body: &str) -> Vec<Value> {
-    split_segments_with_spans(body)
-        .into_iter()
-        .take(8)
-        .map(|(span_start, span_end, text)| {
-            serde_json::json!({
-                "s": "note",
-                "p": "states",
-                "o": text,
-                "span_start": span_start as i64,
-                "span_end": span_end as i64,
-                "valid_from": Value::Null,
-                "valid_until": Value::Null,
-                "confidence": 0.5_f64,
-            })
-        })
-        .collect()
-}
-
-fn split_segments_with_spans(body: &str) -> Vec<(usize, usize, String)> {
-    let mut segments = Vec::new();
-    let mut start = 0usize;
-    for (idx, ch) in body.char_indices() {
-        if ch == '.' || ch == '!' || ch == '?' || ch == '\n' {
-            let end = idx + ch.len_utf8();
-            push_trimmed_segment(body, start, end, &mut segments);
-            start = end;
+/// Strip optional markdown code fences; tolerates ```json and generic ``` blocks.
+pub(crate) fn strip_code_fences(s: &str) -> String {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix("```json") {
+        let rest = rest.trim_start_matches(['\r', '\n']);
+        if let Some(inner) = rest.strip_suffix("```") {
+            return inner.trim().to_string();
         }
     }
-    if start < body.len() {
-        push_trimmed_segment(body, start, body.len(), &mut segments);
+    if let Some(rest) = s.strip_prefix("```JSON") {
+        let rest = rest.trim_start_matches(['\r', '\n']);
+        if let Some(inner) = rest.strip_suffix("```") {
+            return inner.trim().to_string();
+        }
     }
-    segments
+    if let Some(rest) = s.strip_prefix("```") {
+        let rest = rest.trim_start_matches(['\r', '\n']);
+        if let Some(inner) = rest.strip_suffix("```") {
+            return inner.trim().to_string();
+        }
+    }
+    s.to_string()
 }
 
-fn push_trimmed_segment(
-    body: &str,
-    start: usize,
-    end: usize,
-    out: &mut Vec<(usize, usize, String)>,
-) {
-    let Some(raw) = body.get(start..end) else {
-        return;
-    };
-    let trimmed_start_delta = raw.len() - raw.trim_start().len();
-    let trimmed_end_delta = raw.len() - raw.trim_end().len();
-    let span_start = start + trimmed_start_delta;
-    let span_end = end.saturating_sub(trimmed_end_delta);
-    if span_end <= span_start {
-        return;
+/// Parse LLM JSON into claim records, accepting several response shapes.
+pub(crate) fn parse_extraction_response(raw: &str) -> Result<Vec<LlmClaimRecord>> {
+    let trimmed = strip_code_fences(raw).trim().to_string();
+
+    // Shape 1: array of claims (the requested format)
+    if let Ok(claims) = serde_json::from_str::<Vec<LlmClaimRecord>>(&trimmed) {
+        return Ok(claims);
     }
-    let Some(trimmed) = body.get(span_start..span_end) else {
-        return;
-    };
-    let normalized = trimmed
-        .trim_matches(|ch: char| ch.is_whitespace() || ch == '.' || ch == '!' || ch == '?')
-        .trim();
-    let char_len = normalized.chars().count();
-    if !(8..=300).contains(&char_len) {
-        return;
+
+    // Shape 2: wrapped object {"claims": [...]}
+    #[derive(Deserialize)]
+    struct Wrapped {
+        claims: Vec<LlmClaimRecord>,
     }
-    out.push((span_start, span_end, normalized.to_string()));
+    if let Ok(wrapped) = serde_json::from_str::<Wrapped>(&trimmed) {
+        return Ok(wrapped.claims);
+    }
+
+    // Shape 3: single bare claim object — wrap into a vec
+    if let Ok(claim) = serde_json::from_str::<LlmClaimRecord>(&trimmed) {
+        return Ok(vec![claim]);
+    }
+
+    // Shape 4: generic JSON value (array of heterogeneous objects, extra wrappers)
+    if let Ok(value) = serde_json::from_str::<Value>(&trimmed) {
+        if let Some(arr) = value.as_array() {
+            let mut out = Vec::with_capacity(arr.len());
+            for v in arr {
+                match serde_json::from_value::<LlmClaimRecord>(v.clone()) {
+                    Ok(c) => out.push(c),
+                    Err(_) => continue,
+                }
+            }
+            if !out.is_empty() {
+                return Ok(out);
+            }
+        }
+        if let Some(obj) = value.as_object() {
+            for (_k, v) in obj {
+                if let Ok(arr) = serde_json::from_value::<Vec<LlmClaimRecord>>(v.clone()) {
+                    return Ok(arr);
+                }
+            }
+        }
+    }
+
+    tracing::debug!(
+        raw_response = raw,
+        "failed to parse claim extractor response after all shapes"
+    );
+    bail!("could not parse claims from response: {}", trimmed)
 }
 
 #[cfg(test)]
@@ -350,6 +419,71 @@ mod tests {
         assert!(rendered.contains("[byte:000003] bbb\n"));
     }
 
+    #[test]
+    fn parse_array_of_claims_succeeds() {
+        let raw = r#"[{"subject":"a","predicate":"b","object":"c","span_start":0,"span_end":5,"valid_from":null,"valid_until":null,"confidence":1.0}]"#;
+        let v = parse_extraction_response(raw).expect("parse");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].subject.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn parse_wrapped_object_succeeds() {
+        let raw = r#"{"claims":[{"subject":"x","predicate":"y","object":"z","span_start":0,"span_end":5,"valid_from":null,"valid_until":null,"confidence":0.5}]}"#;
+        let v = parse_extraction_response(raw).expect("parse");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].predicate.as_deref(), Some("y"));
+    }
+
+    #[test]
+    fn parse_single_bare_claim_wraps_into_vec() {
+        let raw = r#"{"s":"follow-up","p":"happens","o":"tomorrow","span_start":0,"span_end":19,"valid_from":null,"valid_until":null,"confidence":1.0}"#;
+        let v = parse_extraction_response(raw).expect("parse");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].subject.as_deref(), Some("follow-up"));
+    }
+
+    #[test]
+    fn parse_bare_object_with_json_null_object_field_succeeds() {
+        let raw = r#"{"subject":"x","predicate":"y","object":null,"span_start":0,"span_end":5,"valid_from":null,"valid_until":null,"confidence":0.5}"#;
+        let v = parse_extraction_response(raw).expect("JSON null must deserialize");
+        assert_eq!(v.len(), 1);
+        assert!(v[0].object.is_none());
+    }
+
+    #[test]
+    fn parse_response_with_code_fences_strips_them() {
+        let raw = "```json\n[{\"subject\":\"a\",\"predicate\":\"b\",\"object\":\"c\",\"span_start\":0,\"span_end\":5,\"valid_from\":null,\"valid_until\":null,\"confidence\":1.0}]\n```";
+        let v = parse_extraction_response(raw).expect("parse");
+        assert_eq!(v.len(), 1);
+    }
+
+    #[test]
+    fn parse_short_field_names_via_aliases() {
+        let raw = r#"[{"s":"x","p":"y","o":"z","span_start":0,"span_end":5,"valid_from":null,"valid_until":null}]"#;
+        let v = parse_extraction_response(raw).expect("parse");
+        assert_eq!(v[0].subject.as_deref(), Some("x"));
+        assert_eq!(v[0].predicate.as_deref(), Some("y"));
+        assert_eq!(v[0].object.as_deref(), Some("z"));
+    }
+
+    #[test]
+    fn parse_garbage_returns_err() {
+        let err = parse_extraction_response("not json at all").unwrap_err();
+        assert!(err.to_string().contains("could not parse claims"), "{err}");
+    }
+
+    #[test]
+    fn heuristic_fallback_fn_removed() {
+        // Built at compile time so this source file does not contain the substring literally.
+        let forbidden = concat!("fn ", "heuristic_", "items");
+        let src = include_str!("extractor.rs");
+        assert!(
+            !src.contains(forbidden),
+            "heuristic fallback must stay removed"
+        );
+    }
+
     #[tokio::test]
     async fn extractor_accepts_two_valid_claims() {
         let body = "Rado works at HMC. INTERNORGA had 3500 exhibitors.";
@@ -358,8 +492,8 @@ mod tests {
             .find("INTERNORGA had 3500 exhibitors")
             .expect("second span");
         let response = format!(
-            r#"[{{"s":"Rado","p":"works_at","o":"HMC","span_start":{first},"span_end":{},"valid_from":null,"valid_until":null,"confidence":1.0}},
-{{"s":"INTERNORGA","p":"had_exhibitor_count","o":"3500 exhibitors","span_start":{second},"span_end":{},"valid_from":null,"valid_until":null,"confidence":1.0}}]"#,
+            r#"[{{"subject":"Rado","predicate":"works_at","object":"HMC","span_start":{first},"span_end":{},"valid_from":null,"valid_until":null,"confidence":1.0}},
+{{"subject":"INTERNORGA","predicate":"had_exhibitor_count","object":"3500 exhibitors","span_start":{second},"span_end":{},"valid_from":null,"valid_until":null,"confidence":1.0}}]"#,
             first + "Rado works at HMC".len(),
             second + "INTERNORGA had 3500 exhibitors".len()
         );
@@ -376,7 +510,7 @@ mod tests {
     #[tokio::test]
     async fn extractor_rejects_out_of_bounds_span() {
         let body = "Rado works at HMC.";
-        let response = r#"[{"s":"Rado","p":"works_at","o":"HMC","span_start":0,"span_end":1000,"valid_from":null,"valid_until":null,"confidence":1.0}]"#;
+        let response = r#"[{"subject":"Rado","predicate":"works_at","object":"HMC","span_start":0,"span_end":1000,"valid_from":null,"valid_until":null,"confidence":1.0}]"#;
         let extractor = make_extractor(response);
         let note = make_note("note-2", body, Privacy::Private);
 
@@ -390,7 +524,7 @@ mod tests {
     #[tokio::test]
     async fn extractor_rejects_too_short_span_text() {
         let body = "abcde";
-        let response = r#"[{"s":"X","p":"is","o":"Y","span_start":0,"span_end":4,"valid_from":null,"valid_until":null,"confidence":1.0}]"#;
+        let response = r#"[{"subject":"X","predicate":"is","object":"Y","span_start":0,"span_end":4,"valid_from":null,"valid_until":null,"confidence":1.0}]"#;
         let extractor = make_extractor(response);
         let note = make_note("note-3", body, Privacy::Private);
 
@@ -407,7 +541,7 @@ mod tests {
         let salary_start = body.find("salary 95k").expect("salary span");
         let salary_end = salary_start + "salary 95k".len();
         let response = format!(
-            r#"[{{"s":"Comp","p":"has_salary","o":"95k","span_start":{salary_start},"span_end":{salary_end},"valid_from":null,"valid_until":null,"confidence":1.0}}]"#
+            r#"[{{"subject":"Comp","predicate":"has_salary","object":"95k","span_start":{salary_start},"span_end":{salary_end},"valid_from":null,"valid_until":null,"confidence":1.0}}]"#
         );
         let extractor = make_extractor(&response);
         let note = make_note("note-4", body, Privacy::Private);
@@ -426,9 +560,15 @@ mod tests {
         let extractor = make_extractor("{not json");
         let note = make_note("note-5", body, Privacy::Private);
 
-        let claims = extractor.extract(&note, body).await.expect("must fallback");
-        assert_eq!(claims.len(), 1);
-        assert_eq!(claims[0].predicate, "states");
+        let err = extractor
+            .extract(&note, body)
+            .await
+            .expect_err("parse must fail");
+        assert!(
+            err.to_string().contains("could not parse claims")
+                || err.to_string().contains("failed to parse"),
+            "{err}"
+        );
     }
 
     #[test]
