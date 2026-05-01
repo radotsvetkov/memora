@@ -115,7 +115,7 @@ impl<'a> Indexer<'a> {
 
         let paths: Vec<PathBuf> = scan(vault.root()).collect();
 
-        let results: Vec<(PathBuf, RebuildPathOutcome)> = stream::iter(paths.into_iter())
+        let results: Vec<(PathBuf, RebuildPathOutcome)> = stream::iter(paths)
             .map(|path| {
                 let vault = vault.clone();
                 let index = index.clone();
