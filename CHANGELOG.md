@@ -5,6 +5,15 @@
 ### Added
 - Initial project scaffolding.
 
+## [0.1.21] - 2026-05-02
+
+### Changed
+- Faster first-time indexing with local LLMs: bounded parallel note processing (`[indexing] parallelism`), `--no-contradict` on `memora index`, dedicated Ollama embedding model via `/api/embeddings`, `keep_alive` on chat completions, and structured JSON extraction paths.
+
+### Fixed
+- SQLite `PRAGMA busy_timeout=60000` for parallel rebuild writers.
+- Remove redundant `.into_iter()` in the parallel indexer stream (Rust 1.95 `clippy::useless_conversion`).
+
 ## [0.1.4] - 2026-04-29
 
 ### Fixed
