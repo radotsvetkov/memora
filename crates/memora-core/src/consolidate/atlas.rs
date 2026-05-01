@@ -13,7 +13,12 @@ use crate::consolidate::prompts::{REGION_OVERVIEW_PROMPT, SUBREGION_PROPOSAL_PRO
 use crate::index::Index;
 use crate::note::{self, Privacy};
 
+const MIN_CLAIMS_FOR_SYNTHESIS: usize = 5;
+
 const DEFAULT_SUBREGION_THRESHOLD: usize = 200;
+
+const ATLAS_LOW_CONTENT_OVERVIEW: &str =
+    "Too few claims for synthesis. Add more notes to this region.";
 
 pub struct AtlasWriter<'a> {
     pub db: &'a Index,
@@ -95,7 +100,11 @@ impl<'a> AtlasWriter<'a> {
                 .then_with(|| a.cmp(b))
         });
 
-        let overview = self.region_overview(region, &claims).await?;
+        let overview = if claims.len() < MIN_CLAIMS_FOR_SYNTHESIS {
+            ATLAS_LOW_CONTENT_OVERVIEW.to_string()
+        } else {
+            self.region_overview(region, &claims).await?
+        };
         let decisions = self.decisions_for_region(region)?;
         let stale = self.stale_for_region(region)?;
         let contradictions = self.contradictions_for_region(&note_ids)?;
@@ -111,11 +120,17 @@ impl<'a> AtlasWriter<'a> {
         let atlas_path = self.vault.join(region).join("_atlas.md");
         atomic_write(&atlas_path, &atlas)?;
 
-        let index_md = self
-            .region_index(region, &subjects, &claims_by_subject)
-            .await?;
         let index_path = self.vault.join(region).join("_index.md");
-        atomic_write(&index_path, &index_md)?;
+        if claims.len() < MIN_CLAIMS_FOR_SYNTHESIS {
+            if index_path.exists() {
+                fs::remove_file(&index_path)?;
+            }
+        } else {
+            let index_md = self
+                .region_index(region, &subjects, &claims_by_subject)
+                .await?;
+            atomic_write(&index_path, &index_md)?;
+        }
 
         if claims.len() > DEFAULT_SUBREGION_THRESHOLD {
             self.maybe_split_subregions(region, &notes, &claims).await?;
@@ -570,4 +585,138 @@ fn sanitize_segment(input: &str) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use chrono::{TimeZone, Utc};
+    use memora_llm::{CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    use crate::claims::{Claim, ClaimStore};
+    use crate::note::{self, Frontmatter, Note, NoteSource, Privacy};
+
+    fn write_note(vault: &Path, region: &str, id: &str) -> Result<PathBuf> {
+        let region_dir = vault.join(region);
+        fs::create_dir_all(&region_dir)?;
+        let path = region_dir.join(format!("{id}.md"));
+        let body = format!("Body for {id}.");
+        let note = Note {
+            path: path.clone(),
+            fm: Frontmatter {
+                id: id.to_string(),
+                region: region.to_string(),
+                source: NoteSource::Personal,
+                privacy: Privacy::Private,
+                created: Utc
+                    .with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
+                    .single()
+                    .expect("valid datetime"),
+                updated: Utc
+                    .with_ymd_and_hms(2026, 1, 2, 0, 0, 0)
+                    .single()
+                    .expect("valid datetime"),
+                summary: format!("summary-{id}"),
+                tags: vec![],
+                refs: vec![],
+            },
+            body,
+            wikilinks: vec![],
+        };
+        fs::write(&path, note::render(&note))?;
+        Ok(path)
+    }
+
+    fn make_claim(note_id: &str, subject: &str, idx: usize) -> Claim {
+        let valid_from = Utc
+            .with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
+            .single()
+            .expect("valid datetime");
+        let object = format!("obj{idx}");
+        Claim {
+            id: Claim::compute_id(subject, "relates_to", &object, note_id, idx),
+            subject: subject.to_string(),
+            predicate: "relates_to".to_string(),
+            object,
+            note_id: note_id.to_string(),
+            span_start: 0,
+            span_end: 4,
+            span_fingerprint: Claim::compute_fingerprint("Body"),
+            valid_from,
+            valid_until: None,
+            confidence: 0.9,
+            privacy: Privacy::Private,
+            extracted_by: "test/atlas".to_string(),
+            extracted_at: valid_from,
+        }
+    }
+
+    struct CountingLlm {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmClient for CountingLlm {
+        async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(CompletionResponse {
+                text: "unexpected LLM output".to_string(),
+                model: "mock/count".to_string(),
+                input_tokens: None,
+                output_tokens: None,
+            })
+        }
+
+        fn model_name(&self) -> &str {
+            "mock/count"
+        }
+
+        fn destination(&self) -> LlmDestination {
+            LlmDestination::Local
+        }
+    }
+
+    #[tokio::test]
+    async fn atlas_skips_llm_when_below_min_claims() -> Result<()> {
+        let temp = tempdir()?;
+        let vault = temp.path().join("vault");
+        fs::create_dir_all(&vault)?;
+        let db_path = temp.path().join("memora.db");
+        let index = Index::open(&db_path)?;
+        let store = ClaimStore::new(&index);
+
+        for i in 0..2 {
+            let id = format!("low-{i}");
+            let path = write_note(&vault, "thin", &id)?;
+            let parsed = note::parse(&path)?;
+            index.upsert_note(&parsed, &parsed.body)?;
+            store.upsert(&make_claim(&id, "Topic", i as usize))?;
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let llm = CountingLlm {
+            calls: Arc::clone(&calls),
+        };
+        let writer = AtlasWriter {
+            db: &index,
+            claim_store: &store,
+            llm: &llm,
+            vault: &vault,
+        };
+        writer.rebuild_region("thin").await?;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let atlas_path = vault.join("thin").join("_atlas.md");
+        let index_path = vault.join("thin").join("_index.md");
+        assert!(atlas_path.exists());
+        assert!(!index_path.exists());
+        let atlas_text = fs::read_to_string(&atlas_path)?;
+        assert!(atlas_text.contains(ATLAS_LOW_CONTENT_OVERVIEW));
+        Ok(())
+    }
 }

@@ -28,8 +28,8 @@ impl LlmClient for ScriptedLlm {
                 .to_string()
         } else if prompt.contains("Summarize this contradiction") {
             "These claims conflict about the same subject.".to_string()
-        } else if prompt.contains("Generate one short clarifying question") {
-            "What primary source confirms this statement?".to_string()
+        } else if prompt.contains("Generate one specific factual question") {
+            "What primary source confirms the Q4 launch window?".to_string()
         } else {
             "ok".to_string()
         };

@@ -91,7 +91,7 @@ impl LlmClient for MockConsolidateLlm {
             .first()
             .map(|msg| msg.content.clone())
             .unwrap_or_default();
-        let text = if system.contains("splitting an oversized region") {
+        let text = if system.contains("sub-regions for a region") {
             serde_json::json!({
                 "proposed_subregions": [
                     {
@@ -150,6 +150,28 @@ async fn consolidate_writes_atlas_index_idempotent_and_redacts_secret() -> Resul
     let secret_claim = make_claim("ops-1", "Budget", "is", "classified", Privacy::Secret);
     store.upsert(&public_claim)?;
     store.upsert(&secret_claim)?;
+    // Atlas synthesis runs only when the region has at least five claims.
+    store.upsert(&make_claim(
+        "ops-2",
+        "Infra",
+        "runs_on",
+        "k8s",
+        Privacy::Private,
+    ))?;
+    store.upsert(&make_claim(
+        "ops-3",
+        "Alerts",
+        "route_to",
+        "pagerduty",
+        Privacy::Private,
+    ))?;
+    store.upsert(&make_claim(
+        "ops-4",
+        "CI",
+        "blocks",
+        "merge",
+        Privacy::Private,
+    ))?;
     store.add_relation(
         &public_claim.id,
         &secret_claim.id,
