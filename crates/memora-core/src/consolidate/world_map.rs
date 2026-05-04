@@ -7,10 +7,10 @@ use chrono::Utc;
 use memora_llm::{CompletionRequest, LlmClient, Message, Role};
 use rusqlite::params;
 
-use crate::claims::ClaimStore;
 use crate::challenger::{
     detect_contradictions, detect_recent_decisions, detect_stale_dependencies,
 };
+use crate::claims::ClaimStore;
 use crate::consolidate::prompts::{
     REGION_DESCRIPTION_PROMPT, WORLD_MAP_EARLY_STAGES_FALLBACK, WORLD_MAP_PROMPT,
 };
@@ -251,7 +251,7 @@ impl<'a> WorldMapWriter<'a> {
                     .with_timezone(&Utc),
                 valid_until: valid_until
                     .as_deref()
-                    .map(|v| chrono::DateTime::parse_from_rfc3339(v))
+                    .map(chrono::DateTime::parse_from_rfc3339)
                     .transpose()
                     .map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -294,7 +294,9 @@ impl<'a> WorldMapWriter<'a> {
     fn note_region_map(&self) -> Result<HashMap<String, String>> {
         let conn = self.db.pool.get()?;
         let mut stmt = conn.prepare("SELECT id, region FROM notes")?;
-        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
         let mut out = HashMap::new();
         for row in rows {
             let (id, region) = row?;
@@ -347,7 +349,10 @@ fn todays_review_findings(claims: &[Claim], note_regions: &HashMap<String, Strin
     }
 
     for item in detect_stale_dependencies(claims) {
-        let merged = merge_notes(&item.depends_on_source_note_ids, &item.superseded_source_note_ids);
+        let merged = merge_notes(
+            &item.depends_on_source_note_ids,
+            &item.superseded_source_note_ids,
+        );
         let support = item.depends_on_source_note_ids.len() + item.superseded_source_note_ids.len();
         lines.push(ReviewLine {
             priority: 2,

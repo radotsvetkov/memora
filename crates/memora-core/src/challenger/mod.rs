@@ -180,7 +180,10 @@ pub fn detect_stale_dependencies(claims: &[Claim]) -> Vec<StaleDep> {
             continue;
         };
         let dependent = normalize_term(&claim.subject);
-        depends_on.entry((dependent, dep_target)).or_default().push(claim);
+        depends_on
+            .entry((dependent, dep_target))
+            .or_default()
+            .push(claim);
     }
 
     let mut out = Vec::new();
@@ -219,7 +222,10 @@ pub fn detect_open_questions(claims: &[Claim]) -> Vec<OpenQuestion> {
         };
         let subject = normalize_term(&claim.subject);
         let object = normalize_term(claim.object.as_deref().unwrap_or("(unary)"));
-        grouped.entry((subject, family, object)).or_default().push(claim);
+        grouped
+            .entry((subject, family, object))
+            .or_default()
+            .push(claim);
     }
 
     let mut out = grouped
@@ -370,7 +376,9 @@ fn canonical_decision_object(entries: &[&Claim]) -> String {
     counts
         .into_iter()
         .max_by(|(obj_a, count_a), (obj_b, count_b)| {
-            count_a.cmp(count_b).then_with(|| obj_a.len().cmp(&obj_b.len()))
+            count_a
+                .cmp(count_b)
+                .then_with(|| obj_a.len().cmp(&obj_b.len()))
         })
         .map(|(obj, _)| obj)
         .unwrap_or_else(|| "(unary)".to_string())
@@ -566,7 +574,13 @@ mod tests {
                 "appears_in",
                 Some("concept-reference-notes"),
             ),
-            claim("c2", "n2", "akmon", "appears_in", Some("episodic-daily-logs")),
+            claim(
+                "c2",
+                "n2",
+                "akmon",
+                "appears_in",
+                Some("episodic-daily-logs"),
+            ),
         ];
         assert!(detect_contradictions(&claims).is_empty());
     }

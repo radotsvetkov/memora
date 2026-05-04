@@ -8,12 +8,12 @@ use memora_llm::{CompletionRequest, LlmClient, Message, Role};
 use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
 
-use crate::claims::{Claim, ClaimStore};
 use crate::challenger::{
     detect_contradictions, detect_open_questions, detect_recent_decisions,
-    detect_stale_dependencies, Contradiction as ChallengerContradiction, Decision,
-    OpenQuestion, StaleDep,
+    detect_stale_dependencies, Contradiction as ChallengerContradiction, Decision, OpenQuestion,
+    StaleDep,
 };
+use crate::claims::{Claim, ClaimStore};
 use crate::consolidate::prompts::{REGION_OVERVIEW_PROMPT, SUBREGION_PROPOSAL_PROMPT};
 use crate::index::Index;
 use crate::note::{self, Privacy};
@@ -132,10 +132,12 @@ impl<'a> AtlasWriter<'a> {
             &overview,
             &subjects,
             &claims_by_subject,
-            &decisions,
-            &stale,
-            &contradictions,
-            &open_questions,
+            AtlasFindings {
+                decisions: &decisions,
+                stale: &stale,
+                contradictions: &contradictions,
+                open_questions: &open_questions,
+            },
         );
         let atlas_path = self.vault.join(region).join("_atlas.md");
         atomic_write(&atlas_path, &atlas)?;
@@ -330,7 +332,7 @@ impl<'a> AtlasWriter<'a> {
                     .with_timezone(&Utc),
                 valid_until: valid_until
                     .as_deref()
-                    .map(|v| chrono::DateTime::parse_from_rfc3339(v))
+                    .map(chrono::DateTime::parse_from_rfc3339)
                     .transpose()
                     .map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -373,7 +375,9 @@ impl<'a> AtlasWriter<'a> {
     fn note_region_map(&self) -> Result<HashMap<String, String>> {
         let conn = self.db.pool.get()?;
         let mut stmt = conn.prepare("SELECT id, region FROM notes")?;
-        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
         let mut out = HashMap::new();
         for row in rows {
             let (id, region) = row?;
@@ -542,15 +546,19 @@ impl<'a> AtlasWriter<'a> {
     }
 }
 
+struct AtlasFindings<'a> {
+    decisions: &'a [Decision],
+    stale: &'a [StaleDep],
+    contradictions: &'a [ChallengerContradiction],
+    open_questions: &'a [OpenQuestion],
+}
+
 fn build_atlas_markdown(
     region: &str,
     overview: &str,
     subjects: &[String],
     claims_by_subject: &BTreeMap<String, Vec<Claim>>,
-    decisions: &[Decision],
-    stale: &[StaleDep],
-    contradictions: &[ChallengerContradiction],
-    open_questions: &[OpenQuestion],
+    findings: AtlasFindings<'_>,
 ) -> String {
     #[derive(Debug)]
     struct RenderTuple {
@@ -672,10 +680,10 @@ fn build_atlas_markdown(
     }
 
     out.push_str("## Recent decisions\n");
-    if decisions.is_empty() {
+    if findings.decisions.is_empty() {
         out.push_str("- none\n");
     } else {
-        for item in decisions {
+        for item in findings.decisions {
             out.push_str(&format!(
                 "- **{} -> {}** ({} supporting claims across {})\n",
                 humanize_term(&item.subject),
@@ -687,10 +695,10 @@ fn build_atlas_markdown(
     }
 
     out.push_str("\n## Stale dependencies\n");
-    if stale.is_empty() {
+    if findings.stale.is_empty() {
         out.push_str("- none\n");
     } else {
-        for item in stale {
+        for item in findings.stale {
             out.push_str(&format!(
                 "- **{}** depends on `{}` which is superseded by `{}` ({} depends_on sources; {} superseded_by sources: {})\n",
                 humanize_term(&item.dependent_subject),
@@ -707,10 +715,10 @@ fn build_atlas_markdown(
     }
 
     out.push_str("\n## Contradictions\n");
-    if contradictions.is_empty() {
+    if findings.contradictions.is_empty() {
         out.push_str("- none\n");
     } else {
-        for item in contradictions {
+        for item in findings.contradictions {
             out.push_str(&format!(
                 "- **{}: {} disagreement** - {} ({} sources) vs {} ({} sources) [{}]\n",
                 humanize_term(&item.subject),
@@ -727,10 +735,10 @@ fn build_atlas_markdown(
         }
     }
     out.push_str("\n## Open questions\n");
-    if open_questions.is_empty() {
+    if findings.open_questions.is_empty() {
         out.push_str("- none\n");
     } else {
-        for item in open_questions {
+        for item in findings.open_questions {
             out.push_str(&format!(
                 "- **{}: {}** - {} ({} supporting claims across {})\n",
                 humanize_term(&item.subject),
@@ -899,10 +907,7 @@ fn decided_pairs(decisions: &[Decision]) -> HashSet<(String, String)> {
 }
 
 fn normalize_decision_like_object(value: &str) -> String {
-    let mut normalized = value
-        .trim()
-        .to_ascii_lowercase()
-        .replace([' ', '_'], "-");
+    let mut normalized = value.trim().to_ascii_lowercase().replace([' ', '_'], "-");
     while normalized.contains("--") {
         normalized = normalized.replace("--", "-");
     }
@@ -1136,7 +1141,10 @@ mod tests {
             Some("stainless-templates"),
         )];
         let note_ids = HashSet::from(["akmon-01".to_string()]);
-        let note_regions = HashMap::from([("akmon-01".to_string(), "semantic/projects/akmon".to_string())]);
+        let note_regions = HashMap::from([(
+            "akmon-01".to_string(),
+            "semantic/projects/akmon".to_string(),
+        )]);
         let decisions = vec![Decision {
             subject: "akmon".to_string(),
             object: "stainless templates".to_string(),
@@ -1212,10 +1220,12 @@ mod tests {
             "overview",
             &["akmon".to_string()],
             &claims_by_subject,
-            &[],
-            &[],
-            &[],
-            &[],
+            AtlasFindings {
+                decisions: &[],
+                stale: &[],
+                contradictions: &[],
+                open_questions: &[],
+            },
         );
 
         assert!(
