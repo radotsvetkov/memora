@@ -1,6 +1,6 @@
-Verifiable cognitive memory for personal vaults. Cite, or it didn't happen.
-
 # Memora
+
+Verifiable cognitive memory for personal vaults. Cite, or it didn't happen.
 
 → **[See the architecture in motion](https://radotsvetkov.github.io/memora)**
 
@@ -138,7 +138,7 @@ Use with Claude Desktop (`claude_desktop_config.json`):
 
 ## Status
 
-v0.1.26. Indexes 100-note vaults in 5 to 10 minutes with Claude Haiku for about $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target. Larger scales are unmeasured. The active challenger now surfaces decisions, contradictions, stale dependencies, and open questions in every atlas.
+v0.1.27. Indexes 100-note vaults in 5 to 10 minutes with Claude Haiku for about $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target. Larger scales are unmeasured. The active challenger now surfaces decisions, contradictions, stale dependencies, and open questions in every atlas.
 
 Issues, edge cases, and design discussions welcome at [github.com/radotsvetkov/memora/issues](https://github.com/radotsvetkov/memora/issues).
 

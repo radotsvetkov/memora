@@ -5,6 +5,14 @@
 ### Added
 - Initial project scaffolding.
 
+## [0.1.27] - 2026-05-04
+
+### Fixed
+- Include post-tag consolidation and clippy fixes in a released build.
+
+### Changed
+- Move README product slogan under the `Memora` title.
+
 ## [0.1.26] - 2026-05-04 (Launch readiness)
 
 ### Added
