@@ -2,7 +2,7 @@
 
 **Verifiable cognitive memory for personal vaults. Cite-or-it-didn't-happen.**
 
-Memora retrieves claims, not notes — atomic facts with source-span pointers,
+Memora retrieves claims, not notes - atomic facts with source-span pointers,
 validity windows, and privacy bands. Every LLM citation is architecturally
 validated against your markdown.
 
@@ -23,16 +23,19 @@ Use a structure that keeps note intent clear and lets Memora infer context.
 ```text
 ~/brain/
   episodic/
-    2026-04-29-launch-prep.md
-    2026-04-30-retro.md
+    meeting-2025-q3-arch.md
+    2025-10-design-review.md
   semantic/
-    product/
-      roadmap.md
-      positioning.md
+    projects/
+      drift/
+        roadmap.md
+        serialization-strategy-2025-q3.md
+      drift-bench/
+        benchmark-language-notes.md
     people/
-      team-topology.md
-    health/
-      baseline-notes.md
+      sarah.md
+      james.md
+      priya.md
   procedural/
     release-checklist.md
     incident-playbook.md
@@ -87,14 +90,14 @@ Memora reads frontmatter for classification, temporal cues, and privacy defaults
 
 ```yaml
 ---
-title: Q1 Roadmap Decision
+title: drift Serialization Decision
 type: semantic
-date: 2026-04-29
-region: product
+date: 2025-09-12
+region: projects/drift
 privacy: private
-tags: [roadmap, reliability, planning]
+tags: [drift, serialization, architecture]
 status: active
-valid_from: 2026-04-29
+valid_from: 2025-09-12
 valid_until:
 source: leadership-sync
 confidence: medium
@@ -166,9 +169,9 @@ You can edit this file manually, but treat generated sections as ephemeral.
 
 The challenger writes concise operational prompts, such as:
 
-- "3 syntheses now stale after roadmap supersession."
-- "2 contradictions in product priorities need adjudication."
-- "Health region has low connectivity; capture baseline assumptions."
+- "q4-rollout-plan depends on serialization-strategy-2024, now superseded."
+- "drift-bench language disagreement: rust vs go."
+- "drift backpressure strategy is still pending decision."
 
 Read this section as a queue for targeted note maintenance, not as an alarm log.
 
@@ -208,7 +211,7 @@ the claim graph current.
 
 Use Claude Code with Memora MCP configured. Ask normal questions:
 
-- "What did I decide about the Q1 roadmap?"
+- "What did the team decide about drift's serialization format?"
 - "What changed in deployment strategy this month?"
 - "Which assumptions in product strategy were superseded?"
 

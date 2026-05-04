@@ -5,6 +5,30 @@
 ### Added
 - Initial project scaffolding.
 
+## [0.1.26] - 2026-05-04 (Launch readiness)
+
+### Added
+- Active challenger surfaces decisions, contradictions, stale dependencies, and open questions in every atlas.
+- Cross-region detection for contradictions and open questions.
+- Predicate exclusivity gating to prevent false-positive contradictions.
+- Object normalization for decision detection (for example, "stainless" and "stainless-templates" treated as one decision).
+- Strong-predicate filter for recent decisions (filters single-claim noise).
+- Verbatim claim deduplication at consolidation render time with stable claim ID selection and source list truncation at 12 entries.
+- Recommended models documentation.
+- Updated landing page demonstrating challenger output.
+
+### Changed
+- Atlas synthesis now omits decided pairs from "Open questions" sections to prevent duplicate surfacing.
+- CLI summary now reports separate counts for empty extractions, rate-limited failures, parse failures, and invalid claims.
+- Indexer exits non-zero when rate-limited count > 0 to surface partial-success runs to wrapper scripts.
+- All documentation examples updated to a consistent fictional domain.
+
+### Fixed
+- Indexer no longer indexes generated `_atlas.md` and `_index.md` files as content notes.
+- Watcher no longer triggers reindex when consolidate writes atlas files.
+- Rate-limit failures now properly counted as errors instead of silent warnings.
+- Repeated verbatim claims no longer pad atlas displays.
+
 ## [0.1.21] - 2026-05-02
 
 ### Changed

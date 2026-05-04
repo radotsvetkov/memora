@@ -7,13 +7,13 @@ All tools return JSON payloads.
 Input:
 
 ```json
-{"query":"What changed in project X?","k":5}
+{"query":"What did the team decide about drift's serialization format?","k":5}
 ```
 
 Output:
 
 ```json
-{"hits":[{"id":"note-1","summary":"...","region":"ops","score":0.12,"snippet":"..."}],"regions_used":["ops"]}
+{"hits":[{"id":"note-1","summary":"drift moved to MessagePack in Q3","region":"projects/drift","score":0.12,"snippet":"..."}],"regions_used":["projects/drift"]}
 ```
 
 ## `memora_query_cited`
@@ -21,13 +21,13 @@ Output:
 Input:
 
 ```json
-{"query":"Where does Rado work?","k":5}
+{"query":"What did the team decide about drift's serialization format?","k":5}
 ```
 
 Output:
 
 ```json
-{"clean_text":"...","verified_count":2,"checks":[{"claim_id":"abcd","status":"verified"}]}
+{"clean_text":"drift switched from JSON to MessagePack [claim:drf75a1c9e10b2aa]","verified_count":1,"checks":[{"claim_id":"drf75a1c9e10b2aa","status":"verified"}]}
 ```
 
 ## `memora_get_note`
@@ -38,7 +38,7 @@ Output keys: `id`, `region`, `summary`, `body`, `tags`, `refs`, `wikilinks`, `he
 
 ## `memora_get_atlas`
 
-Input: `{"region":"work/projects"}`
+Input: `{"region":"projects/drift"}`
 
 Output keys: `region`, `atlas_markdown`, `note_count`
 
@@ -90,7 +90,7 @@ Output: array of stale claim rows.
 
 ## `memora_contradictions`
 
-Input: `{"subject":"INTERNORGA"}` (optional)
+Input: `{"subject":"drift-bench"}` (optional)
 
 Output: array of contradiction rows.
 

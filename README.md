@@ -1,44 +1,88 @@
-A claim graph for your Obsidian vault. Verifiable citations, per-claim privacy, surfaces decisions and contradictions as your notes evolve.
+Verifiable cognitive memory for personal vaults. Cite, or it didn't happen.
 
 # Memora
 
-## Why
+→ **[See the architecture in motion](https://radotsvetkov.github.io/memora)**
 
-Notes accumulate faster than decisions get revisited. Three months later, teams cannot reliably answer what was decided, what changed, and what is now stale. Most AI note tools make this worse by retrieving chunks and trusting the model to cite correctly. Memora extracts atomic claims with span-level citations, tracks those claims as your vault evolves, and surfaces decisions, contradictions, stale dependencies, and open questions directly from the claim graph.
+## The problem
 
-## What's Different
+Teams write decisions in Obsidian, then lose track of what was decided, what changed, and what is stale. Most note-aware AI tools retrieve chunks and trust the model to cite correctly. That trust breaks under pressure. Memora extracts atomic claims with span-level provenance, then validates citations against source spans before an answer is returned.
 
-1. **Verifiable citations**  
-   Every claim is fingerprinted to a source span. LLM outputs cite claim IDs, and citations are re-validated against markdown before delivery.
+## How Memora differs
 
-2. **Per-claim privacy bands**  
-   Secret-marked spans never leave your machine unredacted. You can mark sensitive lines while still retrieving surrounding non-sensitive claims.
+The atomic unit of memory is a **claim**, not a note. A claim is an extracted statement with:
 
-3. **Temporal validity**  
-   Claims carry `valid_from` / `valid_until`. Superseded decisions remain queryable with context instead of disappearing.
+- subject, predicate, object
+- source note plus byte-range span
+- blake3 fingerprint of the source text
+- valid_from and valid_until temporal window
+- privacy band (public / private / secret)
+- provenance edges to source claims when synthesized
 
-4. **Claim-graph synthesis**  
-   Atlases surface decisions, contradictions, stale dependencies, and open questions — not just retrieved chunks.
+When the LLM answers, it cites claim IDs. The validator re-reads the source span from markdown, recomputes the fingerprint, and rejects citations that do not match. Unknown IDs are stripped and the model is retried with verified context only. The citation contract is enforced by Rust types and span hashes, not prompt compliance.
 
-## Example Output
+## What you get
 
-```markdown
-## Stale dependencies
-- **staleness-case-a-synthesis** depends on `retrieval-eval-notes` which is superseded by `retrieval-eval-notes-v2`
-  (10 depends_on sources; 4 superseded_by sources)
+| | |
+|---|---|
+| **Verified citations** | Every claim ID in an answer is re-validated against source spans before the answer is returned. |
+| **Provenance + staleness** | Synthesis claims point to source claims. Edit a source note, dependent syntheses are marked stale. |
+| **Time-aware reasoning** | Claims carry validity windows. Historical states remain queryable while current state stays clear. |
+| **Per-claim privacy** | Inline `<!--privacy:secret-->...<!--/privacy-->` markers apply sub-span privacy and cloud calls redact secret claim bodies. |
+| **Active challenger** | A daily challenger run surfaces decisions, contradictions, stale dependencies, and open questions in `world_map.md`. |
+| **Hybrid retrieval** | BM25 plus embeddings plus rank fusion, then graph-aware expansion over claim links and wikilinks. |
+| **Local-first** | Single Rust binary with SQLite and HNSW. Full local operation is available with Ollama. |
+| **Obsidian-native** | Plain markdown vault with frontmatter. Keep editing in Obsidian. |
+| **MCP-native** | Works with Claude Desktop, Cursor, and other MCP clients over stdio. |
 
-## Open questions
-- **memora: precision-vs-recall-tradeoff** - decision pending
-  (9 supporting claims across [[ep-daily-2026-04-29]], [[ep-daily-2026-04-13]], and 7 more)
+## Recommended models
+
+Memora makes two kinds of LLM calls. Extraction runs once per note and produces structured triples. Synthesis runs once per atlas and produces prose. Provider quality matters, especially for extraction.
+
+### Anthropic Claude Haiku (recommended)
+
+This is what Memora was tuned against. Best balance of cost and quality.
+
+```toml
+[llm]
+provider = "anthropic"
+model = "claude-haiku-4-5-20251001"
 ```
 
-This is what an atlas looks like after Memora indexes a 100-note Obsidian vault. Each finding cites the exact notes that support it — click through to verify.
+Cost: about $0.30 to index a 100-note vault. Speed: 5 to 10 minutes with parallelism = 8. Anthropic's free tier limits requests to 50 per minute. Add at least $5 of credit to reach Tier 1, or set parallelism = 1 to stay under the free limit.
 
-## Status
+### OpenAI gpt-5-mini (alternative)
 
-v0.1.26. Indexes 100-note vaults in 5-10 min with Anthropic Haiku (~$0.30 cost). Local Ollama is supported, but quality degrades meaningfully below 32B parameters. MCP-native — works with Claude Desktop and other MCP clients.
+Comparable extraction quality at similar cost.
 
-## Quick Start
+```toml
+[llm]
+provider = "openai"
+model = "gpt-5-mini"
+```
+
+### Local (Ollama)
+
+Use this when local-only is a hard requirement.
+
+```toml
+[llm]
+provider = "ollama"
+model = "qwen2.5:32b-instruct-q5_K_M"
+```
+
+Honest assessment: Qwen 14B is insufficient for production (hallucinates relationships, produces shallow triples). Qwen 32B is acceptable but misses cross-region patterns. Llama 70B matches Haiku quality with significant memory cost. Below 32B parameters, atlas synthesis quality degrades noticeably.
+
+Embeddings always run locally regardless of chat provider:
+
+```toml
+[embed]
+provider = "ollama"
+model = "nomic-embed-text"
+dim = 768
+```
+
+## Quickstart
 
 Install (cargo):
 
@@ -54,12 +98,12 @@ Configure `~/.config/memora/config.toml`:
 ```toml
 [llm]
 provider = "anthropic"
-model = "claude-3-5-haiku-latest"
+model = "claude-haiku-4-5-20251001"
 
 [embed]
-provider = "openai"
-model = "text-embedding-3-small"
-dim = 1536
+provider = "ollama"
+model = "nomic-embed-text"
+dim = 768
 
 [indexing]
 parallelism = 8
@@ -69,6 +113,12 @@ Index your vault:
 
 ```bash
 memora index --vault ~/your-vault
+```
+
+Ask:
+
+```bash
+memora query "What did we decide about drift's serialization format?" --vault ~/your-vault
 ```
 
 Use with Claude Desktop (`claude_desktop_config.json`):
@@ -86,14 +136,20 @@ Use with Claude Desktop (`claude_desktop_config.json`):
 }
 ```
 
-## Not Yet
+## Status
+
+v0.1.26. Indexes 100-note vaults in 5 to 10 minutes with Claude Haiku for about $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target. Larger scales are unmeasured. The active challenger now surfaces decisions, contradictions, stale dependencies, and open questions in every atlas.
+
+Issues, edge cases, and design discussions welcome at [github.com/radotsvetkov/memora/issues](https://github.com/radotsvetkov/memora/issues).
+
+## Not yet
 
 - Mobile / non-Obsidian access
-- Local LLM quality at production parity
+- Local LLM at production quality
 - PDFs / web clippings / transcripts
 - GUI for atlas review
 
-## Docs, Contributing, License
+## Docs, contributing, license
 
 - Docs: [docs/src](docs/src/) and [project docs site](https://radotsvetkov.github.io/memora/docs/)
 - Contributions and issues: [github.com/radotsvetkov/memora/issues](https://github.com/radotsvetkov/memora/issues)

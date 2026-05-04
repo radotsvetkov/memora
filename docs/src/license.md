@@ -8,8 +8,8 @@ Personal memory infrastructure should be portable, forkable, and embeddable
 without surprise. Apache 2.0 was chosen specifically because:
 
 - **It's permissive without being a free-for-all.** Companies and individuals
-  can build on Memora — wrappers, internal forks, MCP integrations,
-  distribution bundles — without infecting their own license. That matters
+  can build on Memora - wrappers, internal forks, MCP integrations,
+  distribution bundles - without infecting their own license. That matters
   for adoption inside organizations where copyleft would be a non-starter.
 
 - **It includes an explicit patent grant.** Contributors who hold patents

@@ -2,7 +2,7 @@
 
 **Verifiable cognitive memory for personal vaults. Cite-or-it-didn't-happen.**
 
-Memora retrieves claims, not notes — atomic facts with source-span pointers,
+Memora retrieves claims, not notes - atomic facts with source-span pointers,
 validity windows, and privacy bands. Every LLM citation is architecturally
 validated against your markdown.
 
@@ -244,11 +244,11 @@ signals, not a hidden downgrade.
 
 This is a concrete path for one statement from note to cited answer.
 
-1. **User writes text** in `semantic/product/roadmap.md`:
-   "Q1 roadmap decision: prioritize reliability over net-new features."
+1. **User writes text** in `semantic/projects/drift/roadmap.md`:
+   "drift switched serialization from JSON to MessagePack after throughput benchmarks."
 2. **Watcher detects file change** and schedules extraction.
 3. **Extractor emits claim candidate**:
-   `roadmap | prioritizes | reliability_over_new_features`.
+   `drift | uses_serialization | messagepack`.
 4. **Source span recorded** as byte offsets into the markdown file.
 5. **Fingerprint computed** over that exact span and stored in claim row.
 6. **Claim indexed** in FTS and embedding index; edges updated as needed.
@@ -267,10 +267,10 @@ claims.
 
 Contradictions are a first-class maintenance event.
 
-1. A new claim arrives: `deployment_target | is | github_pages`.
+1. A new claim arrives: `drift-bench | uses_language | go`.
 2. System fetches candidate claims with matching subject/predicate and current
    validity windows.
-3. Contradiction judge evaluates pairs (`new`, `candidate`) for conflict.
+3. Contradiction judge evaluates pairs (`new`, `candidate`) for conflict, such as `go` vs `rust`.
 4. If conflict is confirmed:
    - older claim receives `valid_until = new.valid_from` (or event timestamp)
    - `supersedes` edge is written (`new -> old`)

@@ -2,7 +2,7 @@
 
 **Verifiable cognitive memory for personal vaults. Cite-or-it-didn't-happen.**
 
-Memora retrieves *claims*, not notes — atomic facts with source-span pointers,
+Memora retrieves *claims*, not notes - atomic facts with source-span pointers,
 validity windows, and privacy bands. Every LLM citation is architecturally
 validated against your markdown. Hallucinations are caught structurally, not
 by trust.
@@ -13,15 +13,13 @@ by trust.
 
 ## The problem
 
-Personal AI memory tools — RAG over Obsidian, Karpathy's LLM Wiki pattern,
-second-brain wrappers — share one weakness: they retrieve notes and trust the
+Personal AI memory tools, from RAG over Obsidian to second-brain wrappers, share one weakness: they retrieve notes and trust the
 LLM to quote them faithfully. When the LLM fabricates a meeting that didn't
 happen, puts words in someone's mouth, or cites a claim your notes don't
 contain, you have no architectural defense. You either catch the
 hallucination yourself, or you don't.
 
-For a personal knowledge base — your decisions, your medical notes, your
-meeting minutes — that's the wrong trust model.
+For a personal knowledge base with decisions and meeting notes, that is the wrong trust model.
 
 ## How Memora differs
 
@@ -39,7 +37,7 @@ When the LLM answers, it cites claim ids. The validator re-reads the source
 span from your markdown, recomputes the fingerprint, and rejects citations
 that don't match. Hallucinated ids get stripped and the LLM is re-prompted
 with verified-only context. **The citation contract is enforced by Rust types
-and span hashes — not by prompt obedience.**
+and span hashes, not by prompt obedience.**
 
 ## What you get
 
@@ -57,19 +55,15 @@ and span hashes — not by prompt obedience.**
 
 ## Where to go next
 
-- **[Quickstart](./quickstart.md)** — install and first verified citation in 10 minutes.
-- **[Architecture](./architecture.md)** — claim graph, retrieval, validation pipeline.
-- **[Obsidian guide](./obsidian-guide.md)** — daily-driver setup with Claude Code.
-- **[Comparison](./comparison.md)** — vs RAG, vs LLM Wiki, vs other systems.
-- **[MCP tools](./mcp-tools.md)** — every tool, with examples.
+- **[Quickstart](./quickstart.md)** - install and first verified citation in 10 minutes.
+- **[Architecture](./architecture.md)** - claim graph, retrieval, validation pipeline.
+- **[Obsidian guide](./obsidian-guide.md)** - daily-driver setup with Claude Code.
+- **[Comparison](./comparison.md)** - vs RAG, LLM Wiki, and other systems.
+- **[MCP tools](./mcp-tools.md)** - every tool, with examples.
 
 ## Status
 
-`v0.1.3` — public release. The architecture is complete; the test suite
-covers all five differentiators including end-to-end citation retry.
-Comparative benchmarks against other systems are not yet published.
-Real-world vault testing is in progress; vault sizes up to a few thousand
-notes are the target. Larger scales are unmeasured.
+v0.1.26. Indexes 100-note vaults in 5 to 10 minutes with Claude Haiku for about $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target. Larger scales are unmeasured. The active challenger surfaces decisions, contradictions, stale dependencies, and open questions in every atlas.
 
 Issues, edge cases, and design discussions welcome at
 [github.com/radotsvetkov/memora/issues](https://github.com/radotsvetkov/memora/issues).

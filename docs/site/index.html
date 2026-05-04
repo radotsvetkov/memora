@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Memora — Verifiable Cognitive Memory</title>
+  <title>Memora - Verifiable Cognitive Memory</title>
   <meta name="description" content="Local-first verifiable cognitive memory for Obsidian-compatible vaults. Claim graph, span-hash citation validation, MCP-native. Single Rust binary.">
-  <meta property="og:title" content="Memora — Verifiable Cognitive Memory">
-  <meta property="og:description" content="Cite-or-it-didn't-happen. Memora retrieves claims, not notes — and validates every citation against your markdown.">
+  <meta property="og:title" content="Memora - Verifiable Cognitive Memory">
+  <meta property="og:description" content="Cite-or-it-didn't-happen. Memora retrieves claims, not notes and validates every citation against your markdown.">
   <meta property="og:url" content="https://radotsvetkov.github.io/memora">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -481,7 +481,7 @@
     }
 
     .md-span::after {
-      content: 'span 142..198';
+      content: 'span 184..281';
       position: absolute;
       bottom: -22px;
       left: 0;
@@ -1046,7 +1046,7 @@
 <nav>
   <a class="nav-logo" href="#">
     <span class="nav-name">Memora</span>
-    <span class="nav-version">v0.1.3</span>
+    <span class="nav-version">v0.1.26</span>
   </a>
   <ul class="nav-links">
     <li><a href="#anatomy">Anatomy</a></li>
@@ -1098,25 +1098,14 @@
         <div class="dot dot-red"></div>
         <div class="dot dot-yellow"></div>
         <div class="dot dot-green"></div>
-        <span class="terminal-title">memora — ~/brain — claude-haiku — Anthropic</span>
+        <span class="terminal-title">memora - ~/notes - claude-haiku - Anthropic</span>
       </div>
-      <div class="terminal-body">
-        <div><span class="t-prompt">~/brain</span> <span class="t-dim">$</span> <span class="t-cmd">memora query "what did i decide about Q1?" --vault ~/brain</span></div>
+      <div class="terminal-body" id="hero-demo-body">
+        <div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">memora index --vault ~/notes</span></div>
         <br>
-        <div class="t-dim">  retrieving claims · 7 candidates · 1.3MB vault · ~120ms</div>
-        <div class="t-dim">  spreading activation · region: product · 4 hops</div>
-        <div class="t-dim">  privacy filter · 2 secret claims redacted at boundary</div>
-        <br>
-        <div><span class="t-emerald">memora:</span> <span class="t-cmd">In Q1 you prioritized reliability over net-new feature work</span></div>
-        <div><span class="t-cmd">  <span class="t-claim">[claim:7f3a]</span> due to operational risk in two critical services</div>
-        <div><span class="t-cmd">  <span class="t-claim">[claim:9b21]</span>. Rollout has two stages <span class="t-claim">[claim:c4d8]</span>.</span> <span class="t-bar"></span></div>
-        <br>
-        <div class="t-dim">  validator · re-reading source spans · recomputing blake3</div>
-        <div><span class="t-verified">  ✓ claim:7f3a · roadmap.md @ 142..198 · fingerprint match</span></div>
-        <div><span class="t-verified">  ✓ claim:9b21 · roadmap.md @ 312..361 · fingerprint match</span></div>
-        <div><span class="t-verified">  ✓ claim:c4d8 · deployment-plan.md @ 88..134 · fingerprint match</span></div>
-        <br>
-        <div class="t-dim">  3/3 verified · 0 stripped · 0 retries · audit: .memora/audit.jsonl</div>
+        <div class="t-output">Indexed: 87 notes, 312 claims extracted.</div>
+        <div class="t-output">Empty extractions: 4, Rate-limited: 0, Parse failures: 0, Invalid: 1.</div>
+        <div class="t-output">Total errors: 1 <span class="t-bar"></span></div>
       </div>
     </div>
   </div>
@@ -1139,13 +1128,13 @@
       <div>
         <div class="anatomy-col-label">Source · markdown in your vault</div>
         <div class="md-file">
-          <div class="md-file-name">~/brain/semantic/product/roadmap.md</div>
-          <div class="md-frontmatter">---<br>title: Q1 Roadmap Decision<br>region: product<br>privacy: private<br>updated: 2026-04-29<br>---</div>
+          <div class="md-file-name">~/notes/semantic/projects/drift/roadmap.md</div>
+          <div class="md-frontmatter">---<br>title: drift Serialization Decision<br>region: projects/drift<br>privacy: private<br>updated: 2025-09-12<br>---</div>
           <div class="md-prose">
-            ## Q1 priorities<br><br>
-            <span class="md-span">We decided to prioritize reliability work over net-new feature work in Q1.</span>
+            ## serialization update<br><br>
+            <span class="md-span">drift switched serialization from JSON to MessagePack after benchmark runs showed 3x throughput.</span>
             <br><br>
-            The reason is operational risk concentration in two critical services that have repeatedly missed their SLOs over the last quarter.
+            Source context appears in roadmap.md, retro-2025-q3.md, and meeting-2025-09-12.md.
           </div>
           <div style="height: 28px;"></div>
         </div>
@@ -1163,20 +1152,20 @@
         <div class="anatomy-col-label">Claim · stored in SQLite + HNSW</div>
         <div class="claim-card">
           <div class="claim-card-id">
-            <span style="color:var(--violet);">claim:7f3a91c0…</span>
+            <span style="color:var(--violet);">claim:drf75a1c…</span>
             <span class="verified-badge">verified</span>
           </div>
           <div class="claim-row">
             <span class="claim-key">subject</span>
-            <span class="claim-val subj">Q1 priority</span>
+            <span class="claim-val subj">drift</span>
           </div>
           <div class="claim-row">
             <span class="claim-key">predicate</span>
-            <span class="claim-val pred">prioritizes_over</span>
+            <span class="claim-val pred">uses_serialization</span>
           </div>
           <div class="claim-row">
             <span class="claim-key">object</span>
-            <span class="claim-val">reliability › features</span>
+            <span class="claim-val">messagepack</span>
           </div>
           <div class="claim-row">
             <span class="claim-key">source</span>
@@ -1184,15 +1173,15 @@
           </div>
           <div class="claim-row">
             <span class="claim-key">span</span>
-            <span class="claim-val span">142 .. 198 (56 bytes)</span>
+            <span class="claim-val span">184 .. 281 (97 bytes)</span>
           </div>
           <div class="claim-row">
             <span class="claim-key">fingerprint</span>
-            <span class="claim-val fp">blake3:c4f1a7…ee82</span>
+            <span class="claim-val fp">blake3:9a4e2f1c7b8d0a61...e3b92f7d</span>
           </div>
           <div class="claim-row">
             <span class="claim-key">valid_from</span>
-            <span class="claim-val">2026-04-29</span>
+            <span class="claim-val">2025-09-12</span>
           </div>
           <div class="claim-row">
             <span class="claim-key">privacy</span>
@@ -1212,7 +1201,7 @@
     <p class="section-body">
       Prompt-level "please cite your sources" doesn't survive contact with
       a confident model. Memora makes unsupported citations impossible to
-      surface — by construction.
+      surface, by construction.
     </p>
 
     <div class="why-grid">
@@ -1270,7 +1259,7 @@
       <p class="section-body" style="max-width:600px;margin:0 auto;text-align:center">
         Four frames cycle through a typical turn: capture the note,
         extract the claim, query, and validate. The model never gets
-        the last word — the validator does.
+        the last word. The validator does.
       </p>
     </div>
     <div class="terminal-wrap terminal-live" style="max-width:820px;margin:0 auto">
@@ -1279,11 +1268,11 @@
           <div class="dot dot-red"></div>
           <div class="dot dot-yellow"></div>
           <div class="dot dot-green"></div>
-          <span class="terminal-title">memora — live session preview</span>
+          <span class="terminal-title">memora - live session preview</span>
         </div>
         <div class="terminal-body" id="live-demo-body"></div>
       </div>
-      <p class="demo-caption" id="live-demo-caption">Step 1 — Capture a markdown note in your vault.</p>
+      <p class="demo-caption" id="live-demo-caption">Step 1 - Capture a markdown note in your vault.</p>
     </div>
   </div>
 </section>
@@ -1344,7 +1333,7 @@
 <section class="compare-strip" aria-label="Comparison with other tools">
   <p>
     Wondering how Memora differs from RAG, LLM Wiki, and other personal-memory tools?
-    <a href="./docs/comparison.html">Architectural comparison</a> — six systems, one matrix, no benchmark theater.
+    <a href="./docs/comparison.html">Architectural comparison</a> - six systems, one matrix, no benchmark theater.
   </p>
 </section>
 
@@ -1379,8 +1368,8 @@
         <span class="comment"># Index it</span><br>
         memora <span class="keyword">index</span> --vault ~/brain<br>
         <br>
-        <span class="comment"># Ask something — every cited claim gets validated</span><br>
-        memora <span class="keyword">query</span> <span class="string">"What did I decide about Q1?"</span> --vault ~/brain
+        <span class="comment"># Ask something - every cited claim gets validated</span><br>
+        memora <span class="keyword">query</span> <span class="string">"What did the team decide about drift's serialization format?"</span> --vault ~/brain
       </div>
     </div>
 
@@ -1414,7 +1403,7 @@
         &nbsp;&nbsp;}<br>
         }<br>
         <br>
-        <span class="comment"># 14 tools become available — query, capture, stale, contradictions, challenger, …</span>
+        <span class="comment"># 14 tools become available - query, capture, stale, contradictions, challenger, and more</span>
       </div>
     </div>
 
@@ -1430,7 +1419,7 @@
         model = <span class="string">"llama3.2:3b"</span><br>
         endpoint = <span class="string">"http://127.0.0.1:11434"</span><br>
         <br>
-        <span class="comment"># 3. Query — fully offline, fully private</span><br>
+        <span class="comment"># 3. Query - fully offline, fully private</span><br>
         memora <span class="keyword">query</span> <span class="string">"summarize this week's decisions"</span> --vault ~/brain
       </div>
     </div>
@@ -1443,7 +1432,7 @@
     <div class="section-label">// community</div>
     <h2 class="section-title">Built in the open.</h2>
     <p class="section-body" style="max-width:640px">
-      Memora is Apache 2.0 — friendly to internal forks, downstream
+      Memora is Apache 2.0, friendly to internal forks, downstream
       products, and agent experiments. Issues, docs fixes, and focused
       PRs are welcome.
     </p>
@@ -1489,7 +1478,7 @@
   <div class="footer-inner">
     <div class="footer-left">
       <span class="footer-brand"><span class="fb-mem">Mem</span><span class="fb-ora">ora</span></span>
-      <span class="footer-sub">cite, or it didn't happen.</span>
+      <span class="footer-sub">v0.1.26 · cite, or it didn't happen.</span>
     </div>
     <div class="footer-right">
       <a href="./docs/">Documentation</a>
@@ -1504,60 +1493,91 @@
 
 <script>
   (function () {
+    const heroBody = document.getElementById('hero-demo-body');
+    if (heroBody) {
+      const heroFrames = [
+        {
+          duration: 8000,
+          html:
+            '<div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">memora index --vault ~/notes</span></div>' +
+            '<br>' +
+            '<div class="t-output">Indexed: 87 notes, 312 claims extracted.</div>' +
+            '<div class="t-output">Empty extractions: 4, Rate-limited: 0, Parse failures: 0, Invalid: 1.</div>' +
+            '<div class="t-output">Total errors: 1 <span class="t-bar"></span></div>'
+        },
+        {
+          duration: 12000,
+          html:
+            '<div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">cat ~/notes/projects/drift/_atlas.md</span></div>' +
+            '<br>' +
+            '<div class="t-output">Atlas: projects/drift</div>' +
+            '<div class="t-output">Recent decisions</div>' +
+            '<div class="t-output">drift: JSON to MessagePack (18 supporting claims across [[roadmap]], [[retro-2025-q3]], and 16 more)</div>' +
+            '<br>' +
+            '<div class="t-output">Stale dependencies</div>' +
+            '<div class="t-output">q4-rollout-plan depends on <span class="t-red">serialization-strategy-2024</span></div>' +
+            '<div class="t-output">which is superseded by <span class="t-emerald">serialization-strategy-2025-q3</span></div>' +
+            '<div class="t-output">(5 depends_on sources, 3 superseded_by sources) <span class="t-bar"></span></div>'
+        },
+        {
+          duration: 10000,
+          html:
+            '<div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">memora atlas --region projects/drift-bench</span></div>' +
+            '<br>' +
+            '<div class="t-output">Contradictions</div>' +
+            '<div class="t-output">drift-bench: language disagreement</div>' +
+            '<div class="t-output">rust (8 sources in projects/drift-bench)</div>' +
+            '<div class="t-output">go (12 sources in episodic/meetings)</div>' +
+            '<br>' +
+            '<div class="t-output">Open questions</div>' +
+            '<div class="t-output">drift: backpressure-strategy decision pending</div>' +
+            '<div class="t-output">(7 supporting claims across [[meeting-2025-q3-arch]], [[2025-10-design-review]], and 5 more) <span class="t-bar"></span></div>'
+        }
+      ];
+
+      let heroIndex = 0;
+      const renderHero = () => {
+        const frame = heroFrames[heroIndex];
+        heroBody.innerHTML = frame.html;
+        const wait = frame.duration;
+        heroIndex = (heroIndex + 1) % heroFrames.length;
+        setTimeout(renderHero, wait);
+      };
+      renderHero();
+    }
+
     const cap = document.getElementById('live-demo-caption');
     const body = document.getElementById('live-demo-body');
     if (!body || !cap) return;
 
     const frames = [
       {
-        cap: 'Step 1 — Capture a markdown note in your vault.',
+        cap: 'Step 1 - Capture drift decision notes in the Helix Labs vault.',
         html:
-          '<div><span class="t-prompt">~/brain</span> <span class="t-dim">$</span> <span class="t-cmd">cat &gt; semantic/product/roadmap.md</span></div>' +
-          '<div class="t-dim">  ---</div>' +
-          '<div class="t-dim">  region: product · privacy: private</div>' +
-          '<div class="t-dim">  ---</div>' +
-          '<div class="t-cmd">  We decided to <span class="t-emerald">prioritize reliability</span> over net-new features in Q1.</div>' +
-          '<br>' +
-          '<div class="t-dim">  saved · 218 bytes · sha256 indexed</div>'
+          '<div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">cat &gt; semantic/projects/drift/roadmap.md</span></div>' +
+          '<div class="t-dim">  drift switched serialization from JSON to MessagePack in Q3.</div>' +
+          '<div class="t-dim">  Evidence: roadmap.md, retro-2025-q3.md, meeting-2025-09-12.md.</div>'
       },
       {
-        cap: 'Step 2 — Memora extracts atomic claims and fingerprints the spans.',
+        cap: 'Step 2 - Extraction stores typed claims and source fingerprints.',
         html:
-          '<div><span class="t-prompt">~/brain</span> <span class="t-dim">$</span> <span class="t-cmd">memora index --vault ~/brain</span></div>' +
-          '<div class="t-dim">  watcher · 1 file changed</div>' +
-          '<div class="t-dim">  extractor · 3 atomic claims found</div>' +
-          '<br>' +
-          '<div><span class="t-violet">  claim:7f3a</span> <span class="t-cmd">(Q1 priority, prioritizes_over, reliability › features)</span></div>' +
-          '<div class="t-dim">    span 142..198 · blake3 c4f1a7…ee82 · privacy=private</div>' +
-          '<div><span class="t-violet">  claim:9b21</span> <span class="t-cmd">(reason, is, operational risk concentration)</span></div>' +
-          '<div class="t-dim">    span 244..299 · blake3 8b13d9…a0f1 · privacy=private</div>' +
-          '<br>' +
-          '<div class="t-dim">  HNSW updated · FTS5 updated · 0 contradictions</div>'
+          '<div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">memora index --vault ~/notes</span></div>' +
+          '<div class="t-output">  claim: drift | uses_serialization | messagepack</div>' +
+          '<div class="t-output">  span 184..281 · blake3 9a4e2f1c7b8d0a61...e3b92f7d</div>' +
+          '<div class="t-output">  linked to roadmap.md</div>'
       },
       {
-        cap: 'Step 3 — Query. The model cites claim ids, not free text.',
+        cap: 'Step 3 - Query asks what the team decided about serialization.',
         html:
-          '<div><span class="t-prompt">~/brain</span> <span class="t-dim">$</span> <span class="t-cmd">memora query "what did i decide about Q1?"</span></div>' +
-          '<div class="t-dim">  retrieval · BM25 + HNSW + RRF · 7 candidates · 1 region</div>' +
-          '<div class="t-dim">  privacy filter · 0 secret claims to redact</div>' +
-          '<br>' +
-          '<div><span class="t-emerald">memora:</span> <span class="t-cmd">In Q1 you prioritized reliability over feature work</span></div>' +
-          '<div><span class="t-cmd">  <span class="t-claim">[claim:7f3a]</span> due to operational risk concentration</div>' +
-          '<div><span class="t-cmd">  <span class="t-claim">[claim:9b21]</span>. Also <span class="t-claim">[claim:ff00]</span> — invented.</span> <span class="t-bar"></span></div>'
+          '<div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">memora query "What did the team decide about drift\'s serialization format?"</span></div>' +
+          '<div class="t-output">  drift switched from JSON to MessagePack [claim:drf75a1c9e10b2aa]</div>'
       },
       {
-        cap: 'Step 4 — Validator strips the invented claim. Verified-only retry.',
+        cap: 'Step 4 - Validator confirms the cited claim against roadmap spans.',
         html:
-          '<div class="t-dim">  validator · 3 markers · re-reading source spans</div>' +
-          '<div><span class="t-verified">  ✓ claim:7f3a · roadmap.md @ 142..198 · fingerprint match</span></div>' +
-          '<div><span class="t-verified">  ✓ claim:9b21 · roadmap.md @ 244..299 · fingerprint match</span></div>' +
-          '<div><span class="t-red">  ✗ claim:ff00 · NOT FOUND in claim store</span></div>' +
-          '<br>' +
-          '<div class="t-dim">  stripped 1 marker · re-prompting with verified-only context</div>' +
-          '<div><span class="t-emerald">memora:</span> <span class="t-cmd">In Q1 you prioritized reliability over feature work</span></div>' +
-          '<div><span class="t-cmd">  <span class="t-claim">[claim:7f3a]</span> due to operational risk <span class="t-claim">[claim:9b21]</span>.</span></div>' +
-          '<br>' +
-          '<div class="t-dim">  2/2 verified · 1 stripped · 1 retry · audit logged</div>'
+          '<div class="t-output">  validator: claim drf75a1c9e10b2aa</div>' +
+          '<div class="t-verified">  ✓ roadmap.md @ 184..281 fingerprint match</div>' +
+          '<div class="t-output">  answer returned with verified citation</div>'
       }
     ];
 

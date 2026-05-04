@@ -1,25 +1,33 @@
-# LLM setup (Ollama)
+# LLM setup
 
-Memora’s Ollama client sends two knobs on every `/api/chat` request that affect throughput on local GPUs:
+Canonical model recommendations now live in `docs/src/models.md`.
+This page keeps Ollama-specific setup notes that are useful for local runs.
 
-## `keep_alive` (default `24h`)
+## Ollama runtime behavior
 
-Chat completions include `keep_alive: "24h"` so Ollama keeps the loaded model resident between indexing batches. Without this, cold reload between notes dominates wall time.
+Memora sends `keep_alive: "24h"` on `/api/chat` calls so Ollama keeps the loaded model in memory across indexing batches. This reduces repeated cold starts during long index runs.
 
-## Dedicated embedding model
+## Recommended local config
 
-Configure embeddings separately from the chat model so bulk indexing does not run retrieval vectors through the same Llama weights:
+Use the same model values documented for v0.1.26:
 
 ```toml
 [llm]
 provider = "ollama"
-model = "llama3.1:8b"
-embedding_model = "nomic-embed-text"
+model = "qwen2.5:32b-instruct-q5_K_M"
 endpoint = "http://localhost:11434"
 
 [embed]
 provider = "ollama"
+model = "nomic-embed-text"
 dim = 768
 ```
 
-Use `ollama pull nomic-embed-text` (or your chosen embedding tag) before indexing. `[embed].dim` must match the model output width (768 for `nomic-embed-text`).
+## Setup command
+
+```bash
+ollama pull qwen2.5:32b-instruct-q5_K_M
+ollama pull nomic-embed-text
+```
+
+`[embed].dim` must match the embedding model output width (768 for `nomic-embed-text`).

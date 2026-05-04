@@ -19,7 +19,7 @@ quality-of-life normalizations while indexing:
 ```yaml
 ---
 id: note-id
-region: work/projects
+region: projects/drift
 source: personal
 privacy: private
 created: 2026-04-01T00:00:00Z
@@ -30,17 +30,17 @@ refs: []
 ---
 ```
 
-Example inferred frontmatter for an Obsidian note `work/Project Idea.md`:
+Example inferred frontmatter for an Obsidian note `semantic/projects/drift/serialization-note.md`:
 
 ```yaml
 ---
-id: project-idea
-region: work
+id: serialization-note
+region: projects/drift
 source: personal
 privacy: private
 created: 2026-04-30T18:42:10Z
 updated: 2026-04-30T18:42:10Z
-summary: "First non-empty line from the note body"
+summary: "drift switched from JSON to MessagePack after benchmarking"
 tags: []
 refs: []
 ---

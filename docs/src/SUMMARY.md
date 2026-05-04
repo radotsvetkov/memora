@@ -7,6 +7,7 @@
 # Getting Started
 
 - [Quickstart (10 minutes)](./quickstart.md)
+- [Recommended models](./models.md)
 - [Vault conventions](./vault-conventions.md)
 - [Obsidian properties template](./obsidian-properties-template.md)
 - [Obsidian + Claude Code guide](./obsidian-guide.md)

@@ -2,7 +2,7 @@
 
 **Verifiable cognitive memory for personal vaults. Cite-or-it-didn't-happen.**
 
-Memora retrieves claims, not notes — atomic facts with source-span pointers,
+Memora retrieves claims, not notes - atomic facts with source-span pointers,
 validity windows, and privacy bands. Every LLM citation is architecturally
 validated against your markdown.
 
@@ -235,5 +235,5 @@ depend on manual checking for every answer.
 This is an **architectural** comparison, not a performance comparison. Memora has
 not been run in published head-to-head benchmarks against these systems. The
 distinctions here are about memory modeling, citation guarantees, temporal
-representation, and privacy boundaries — not claims about retrieval speed or
+representation, and privacy boundaries, not claims about retrieval speed or
 quality rankings.

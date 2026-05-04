@@ -2,7 +2,7 @@
 
 **Verifiable cognitive memory for personal vaults. Cite-or-it-didn't-happen.**
 
-Memora retrieves claims, not notes — atomic facts with source-span pointers,
+Memora retrieves claims, not notes - atomic facts with source-span pointers,
 validity windows, and privacy bands. Every LLM citation is architecturally
 validated against your markdown.
 
@@ -46,20 +46,21 @@ Your markdown vault stays human-readable and Obsidian-compatible from the start.
 
 ## 3) Add your first note manually
 
-Create `~/brain/semantic/product/roadmap.md`:
+Create `~/brain/semantic/projects/drift/roadmap.md`:
 
 ```markdown
 ---
-title: Q1 Roadmap Decision
+title: drift Serialization Decision
 type: semantic
-date: 2026-04-29
-region: product
+date: 2025-09-12
+region: projects/drift
 privacy: private
-tags: [roadmap, planning]
+tags: [drift, serialization, architecture]
 ---
 
-We decided to prioritize reliability work over net-new feature work in Q1.
-The reason is operational risk concentration in two critical services.
+drift switched its serialization format from JSON to MessagePack in Q3.
+Benchmarking showed a 3x throughput improvement.
+Decision recorded in roadmap, retro, and review notes.
 ```
 
 <details>
@@ -95,7 +96,7 @@ The result is a queryable claim graph rather than a plain chunk index.
 ## 5) Ask your first query
 
 ```bash
-memora query "What did I decide about the Q1 roadmap?" --vault ~/brain
+memora query "What did we decide about drift's serialization format?" --vault ~/brain
 ```
 
 <details>
@@ -129,7 +130,7 @@ built-in citation validation behavior.
 Prompt:
 
 ```text
-What did I decide about the Q1 roadmap?
+What did we decide about drift's serialization format?
 ```
 
 <details>

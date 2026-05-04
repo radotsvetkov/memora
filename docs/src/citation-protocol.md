@@ -6,6 +6,12 @@ Memora treats citations as verifiable references to claim IDs.
 
 LLM responses use `[claim:<id>]`.
 
+Example:
+
+```text
+drift switched to MessagePack for serialization [claim:drf75a1c9e10b2aa]
+```
+
 ## Verification steps
 
 1. Parse claim markers from LLM output.
@@ -27,3 +33,5 @@ LLM responses use `[claim:<id>]`.
 `clean_text` is rewritten to keep only statements supported by verified claim markers.
 
 This means `"verified"` in Memora is an architectural property (data + hash + span), not a prompt instruction.
+
+For example, a verified claim can point to `semantic/projects/drift/roadmap.md` with a span that captures the MessagePack decision text.
