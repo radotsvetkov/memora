@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
@@ -57,6 +58,17 @@ RULES:
   into multiple claims.
 - Span offsets refer to byte ranges in the note BODY (not frontmatter).
 - Output only the JSON array. No code fences. No commentary.
+
+SUBJECT CONSTRUCTION:
+- Subjects should be lowercase and use hyphens for multi-word entities.
+- The underlying phrase (after un-hyphenating) MUST appear in the note body.
+- Good: body says "the Akmon project decided" → subject "akmon".
+- Good: body says "Mila reviewed the decision log" → subject "mila".
+- Good: body says "csv-tool benchmark Q1" → subject "csv-tool" (already kebab).
+- Bad: body says "we discussed deployment" → subject "deployment-strategy"
+  ("deployment-strategy" is not in the body; fabrication).
+- If the note title implies a subject (e.g., title is "meeting-akmon-release-readiness"),
+  it is fine to use that as a subject if the body discusses it.
 
 GOOD example:
 
@@ -145,7 +157,7 @@ pub struct ClaimExtractor {
 impl ClaimExtractor {
     pub async fn extract(&self, note: &Note, body: &str) -> Result<Vec<Claim>> {
         let marker_spans = parse_privacy_spans(body);
-        let prompt = self.render_prompt(note, body);
+        let prompt = self.build_prompt(note, body);
         let text = self
             .llm
             .chat_json(&prompt, None, 2_000, 0.1)
@@ -175,7 +187,7 @@ impl ClaimExtractor {
                 parsed_count = records.len(),
                 "first extraction returned all-invalid claims; retrying with feedback"
             );
-            let retry_prompt = self.build_retry_prompt(note, body, &records);
+            let retry_prompt = self.build_retry_prompt(note, body);
             let retry_text = self
                 .llm
                 .chat_json(&retry_prompt, None, 2_000, 0.05)
@@ -219,33 +231,37 @@ impl ClaimExtractor {
         claims
     }
 
-    fn build_retry_prompt(
-        &self,
-        note: &Note,
-        body: &str,
-        prior_attempt: &[LlmClaimRecord],
-    ) -> String {
-        let base = self.render_prompt(note, body);
-        let n = prior_attempt.len();
+    fn build_retry_prompt(&self, note: &Note, body: &str) -> String {
+        let base = self.build_prompt(note, body);
         format!(
             "{base}\n\
              \n\
-             --- CORRECTION ---\n\
-             Your previous attempt returned claims with missing or empty \
-             'object' fields, or with invalid spans. Common issues:\n\
-             - object field empty: omit the claim if it's not a binary fact, \
-               or omit the 'object' key for unary predicates\n\
-             - span_end exceeds note length: count bytes carefully or tighten \
-               the span to the sentence that supports the claim\n\
-             - subject not in note body: don't fabricate; only extract \
-               claims explicitly stated\n\
+             --- RETRY GUIDANCE ---\n\
+             Your previous response did not produce usable claims. Try again \
+             with these clarifications:\n\
              \n\
-             Your previous response had {n} items but none passed validation.\n\
-             Try again. Return ONLY a JSON array. No prose."
+             1. The subject of each claim should be a phrase that ACTUALLY APPEARS \
+                in the note body. You may normalize the case (lowercase) and \
+                join multi-word subjects with hyphens, but the underlying phrase \
+                must be in the text. Example: if the body says 'Akmon release \
+                readiness', use subject 'akmon-release-readiness'.\n\
+             \n\
+             2. If the note has no extractable factual claims (e.g., it's just a \
+                short capture or a question to yourself), return an empty array []. \
+                Don't force claims out of vague content.\n\
+             \n\
+             3. For span_start and span_end, use byte offsets pointing to the \
+                region of the body where the claim is expressed. If unsure, use \
+                0 and the body length.\n\
+             \n\
+             4. The 'object' field is optional — omit it (use null) for unary \
+                predicates like 'completed', 'in_progress', 'deprecated'.\n\
+             \n\
+             Return ONLY a JSON array. No prose. No code fences."
         )
     }
 
-    fn render_prompt(&self, note: &Note, body: &str) -> String {
+    fn build_prompt(&self, note: &Note, body: &str) -> String {
         EXTRACTION_PROMPT_TEMPLATE
             .replace("{{NOTE_ID}}", &note.fm.id)
             .replace("{{NOTE_SOURCE}}", &note.fm.source.to_string())
@@ -295,7 +311,7 @@ fn validate_extracted_record(
         return Err(anyhow!("invalid placeholder field value"));
     }
 
-    let (span_start, span_end) = resolve_claim_span(item, body, subject)?;
+    let (span_start, span_end) = resolve_claim_span(item, note, body, subject)?;
 
     let Some(span_text) = body.get(span_start..span_end) else {
         return Err(anyhow!("invalid span: not on UTF-8 boundary"));
@@ -334,10 +350,91 @@ fn validate_extracted_record(
     })
 }
 
+/// Filename stem without extension, e.g. `meeting-akmon.md` → `meeting-akmon`.
+fn note_title_stem(note_path: &Path) -> String {
+    note_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Cases 1–3 only: subject is evidenced in `text` (used for LLM span slice checks).
+fn subject_evidence_in_text(subject: &str, text: &str) -> bool {
+    if text.find(subject).is_some() {
+        return true;
+    }
+    let text_lower = text.to_lowercase();
+    let subject_lower = subject.to_lowercase();
+    if text_lower.find(&subject_lower).is_some() {
+        return true;
+    }
+    let subject_normalized = subject.replace(['-', '_'], " ").to_lowercase();
+    let sn = subject_normalized.trim();
+    if sn.is_empty() {
+        return false;
+    }
+    let text_normalized = text.to_lowercase();
+    text_normalized.find(sn).is_some()
+}
+
+/// Byte index where the subject is grounded in the body, title, or wikilinks.
+/// Second return: log kind for relaxed matches (`None` = exact literal in body).
+fn subject_match_start(
+    subject: &str,
+    body: &str,
+    note_title_stem: &str,
+    wikilinks: &[String],
+) -> Option<(usize, Option<&'static str>)> {
+    if let Some(start) = body.find(subject) {
+        return Some((start, None));
+    }
+
+    let body_lower = body.to_lowercase();
+    let subject_lower = subject.to_lowercase();
+    if let Some(start) = body_lower.find(&subject_lower) {
+        return Some((start, Some("normalized")));
+    }
+
+    let subject_normalized = subject.replace(['-', '_'], " ").to_lowercase();
+    let sn = subject_normalized.trim();
+    if sn.is_empty() {
+        return None;
+    }
+    let body_normalized = body.to_lowercase();
+    if let Some(start) = body_normalized.find(sn) {
+        return Some((start, Some("normalized")));
+    }
+
+    let title_normalized = note_title_stem.replace(['-', '_'], " ").to_lowercase();
+    if title_normalized.contains(sn) {
+        return Some((0, Some("title")));
+    }
+
+    for link in wikilinks {
+        let link_normalized = link.replace(['-', '_'], " ").to_lowercase();
+        let ln = link_normalized.trim();
+        if ln == sn {
+            if let Some(start) = body.find(link.as_str()) {
+                return Some((start, Some("wikilink")));
+            }
+            return Some((0, Some("wikilink")));
+        }
+    }
+
+    None
+}
+
 /// Prefer the LLM span when it fits the body, contains the subject, and passes length bounds.
 /// Otherwise recover via substring search on `subject`.
-fn resolve_claim_span(item: &LlmClaimRecord, body: &str, subject: &str) -> Result<(usize, usize)> {
+fn resolve_claim_span(
+    item: &LlmClaimRecord,
+    note: &Note,
+    body: &str,
+    subject: &str,
+) -> Result<(usize, usize)> {
     let body_len = body.len();
+    let note_stem = note_title_stem(&note.path);
     let span_start_raw =
         usize::try_from(item.span_start).map_err(|_| anyhow!("span_start does not fit usize"))?;
     let span_end_raw =
@@ -352,7 +449,7 @@ fn resolve_claim_span(item: &LlmClaimRecord, body: &str, subject: &str) -> Resul
             .get(span_start_raw..span_end_raw)
             .expect("bounds checked");
         let trimmed_len = slice.trim().chars().count();
-        if !(5..=300).contains(&trimmed_len) || !slice.contains(subject) {
+        if !(5..=300).contains(&trimmed_len) || !subject_evidence_in_text(subject, slice) {
             use_given = false;
         }
     }
@@ -361,13 +458,24 @@ fn resolve_claim_span(item: &LlmClaimRecord, body: &str, subject: &str) -> Resul
         return Ok((span_start_raw, span_end_raw));
     }
 
-    let Some(found_start) = body.find(subject) else {
+    let Some((found_start, match_kind)) =
+        subject_match_start(subject, body, &note_stem, &note.wikilinks)
+    else {
         tracing::warn!(
             subject = %subject,
             "claim subject not found in note body; dropping likely-fabricated claim"
         );
         return Err(anyhow!("subject not found in note body"));
     };
+
+    if let Some(kind) = match_kind {
+        tracing::debug!(
+            subject = %subject,
+            match_kind = kind,
+            "accepted claim via normalized subject match"
+        );
+    }
+
     let found_end = (found_start + subject.len() + 80).min(body_len);
     if found_end <= found_start {
         return Err(anyhow!("recovered span invalid"));
@@ -450,7 +558,14 @@ pub(crate) fn strip_code_fences(s: &str) -> String {
 
 /// Parse LLM JSON into claim records, accepting several response shapes.
 pub(crate) fn parse_extraction_response(raw: &str) -> Result<Vec<LlmClaimRecord>> {
-    let trimmed = strip_code_fences(raw).trim().to_string();
+    let unfenced = strip_code_fences(raw);
+    let trimmed = unfenced.trim();
+
+    if trimmed.is_empty() || trimmed == "{}" || trimmed == "null" || trimmed == "[]" {
+        return Ok(Vec::new());
+    }
+
+    let trimmed = trimmed.to_string();
 
     // Shape 1: array of claims (the requested format)
     if let Ok(claims) = serde_json::from_str::<Vec<LlmClaimRecord>>(&trimmed) {
@@ -514,6 +629,13 @@ mod tests {
     use crate::claims::ClaimStore;
     use crate::index::Index;
     use crate::note::{Frontmatter, Note, NoteSource, Privacy};
+
+    fn make_note_with_path(path: PathBuf, id: &str, body: &str, wikilinks: Vec<String>) -> Note {
+        let mut n = make_note(id, body, Privacy::Private);
+        n.path = path;
+        n.wikilinks = wikilinks;
+        n
+    }
 
     fn make_note(id: &str, body: &str, privacy: Privacy) -> Note {
         Note {
@@ -608,6 +730,84 @@ mod tests {
     fn parse_garbage_returns_err() {
         let err = parse_extraction_response("not json at all").unwrap_err();
         assert!(err.to_string().contains("could not parse claims"), "{err}");
+    }
+
+    #[test]
+    fn parse_empty_object_returns_empty_vec() {
+        assert!(parse_extraction_response("{}").unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_null_returns_empty_vec() {
+        assert!(parse_extraction_response("null").unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_empty_array_returns_empty_vec() {
+        assert!(parse_extraction_response("[]").unwrap().is_empty());
+    }
+
+    #[test]
+    fn subject_validation_accepts_exact_match() {
+        let body = "akmon-release-readiness is tracked.";
+        let got =
+            subject_match_start("akmon-release-readiness", body, "other", &[]).expect("match");
+        assert_eq!(got.0, 0);
+        assert_eq!(got.1, None);
+    }
+
+    #[test]
+    fn subject_validation_accepts_case_insensitive_match() {
+        let body = "Akmon is the focus today.";
+        let got = subject_match_start("akmon", body, "", &[]).expect("match");
+        assert_eq!(got.1, Some("normalized"));
+    }
+
+    #[test]
+    fn subject_validation_accepts_kebab_normalization() {
+        let body = "Akmon release readiness was discussed by the team.";
+        let got = subject_match_start("akmon-release-readiness", body, "", &[]).expect("match");
+        assert_eq!(got.1, Some("normalized"));
+    }
+
+    #[test]
+    fn subject_validation_accepts_note_title_match() {
+        let body = "The team discussed next steps.";
+        let title = "meeting-akmon-release-readiness";
+        let got = subject_match_start("akmon-release-readiness", body, title, &[]).expect("match");
+        assert_eq!(got.1, Some("title"));
+    }
+
+    #[test]
+    fn subject_validation_accepts_wikilink_target() {
+        // Body must not contain the literal subject, or case 1 matches first.
+        let body = "See the linked note for decision tracking.";
+        let got = subject_match_start(
+            "akmon-decision-log",
+            body,
+            "",
+            &["akmon-decision-log".to_string()],
+        )
+        .expect("match");
+        assert_eq!(got.1, Some("wikilink"));
+        assert_eq!(got.0, 0);
+    }
+
+    #[test]
+    fn subject_validation_rejects_truly_fabricated() {
+        assert!(
+            subject_match_start("fabricated-thing", "hello world today", "other-note", &[])
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn note_title_stem_strips_markdown_extension() {
+        let p = PathBuf::from("meeting-2026-04-08-akmon-release-readiness.md");
+        assert_eq!(
+            super::note_title_stem(&p),
+            "meeting-2026-04-08-akmon-release-readiness"
+        );
     }
 
     #[test]
@@ -741,6 +941,18 @@ mod tests {
         let note = make_note("fabricated", body, Privacy::Private);
         let claims = extractor.extract(&note, body).await.expect("extract");
         assert!(claims.is_empty());
+    }
+
+    #[tokio::test]
+    async fn extract_accepts_kebab_subject_when_body_has_spaced_phrase() {
+        let body = "Akmon release readiness was discussed by the team.";
+        let path = PathBuf::from("vault/meeting-2026-04-08-akmon-release-readiness.md");
+        let note = make_note_with_path(path, "meet-1", body, vec![]);
+        let response = r#"[{"subject":"akmon-release-readiness","predicate":"was_discussed","span_start":0,"span_end":200,"valid_from":null,"valid_until":null,"confidence":0.9}]"#;
+        let extractor = make_extractor(response);
+        let claims = extractor.extract(&note, body).await.expect("extract");
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].subject, "akmon-release-readiness");
     }
 
     #[tokio::test]

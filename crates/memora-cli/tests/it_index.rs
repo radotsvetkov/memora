@@ -10,6 +10,26 @@ fn index_emits_per_note_errors_via_tracing() {
     let vault = temp.path().join("vault");
     fs::create_dir_all(&vault).expect("create vault");
 
+    // Pin embed + parallelism so tests do not inherit a developer's global
+    // `~/.config/memora/config.toml` (e.g. Ollama embeddings with a different dim).
+    let memora_dir = vault.join(".memora");
+    fs::create_dir_all(&memora_dir).expect("create .memora");
+    fs::write(
+        memora_dir.join("config.toml"),
+        r#"[embed]
+provider = "deterministic"
+model = "memora-cli/deterministic"
+dim = 64
+
+[indexing]
+parallelism = 1
+
+[frontmatter]
+refs_mode = "sync_from_wikilinks"
+"#,
+    )
+    .expect("write vault-local memora config");
+
     let valid_note = vault.join("valid.md");
     fs::write(
         &valid_note,
