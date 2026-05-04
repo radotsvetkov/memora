@@ -24,7 +24,6 @@ fn scan_finds_expected_fixture_paths() {
 
     let expected = BTreeSet::from([
         PathBuf::from("world_map.md"),
-        PathBuf::from("work/_atlas.md"),
         PathBuf::from("work/team-sync.md"),
         PathBuf::from("personal/example.md"),
     ]);

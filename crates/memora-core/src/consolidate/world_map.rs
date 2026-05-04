@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -8,10 +8,14 @@ use memora_llm::{CompletionRequest, LlmClient, Message, Role};
 use rusqlite::params;
 
 use crate::claims::ClaimStore;
+use crate::challenger::{
+    detect_contradictions, detect_recent_decisions, detect_stale_dependencies,
+};
 use crate::consolidate::prompts::{
     REGION_DESCRIPTION_PROMPT, WORLD_MAP_EARLY_STAGES_FALLBACK, WORLD_MAP_PROMPT,
 };
 use crate::index::Index;
+use crate::Claim;
 
 pub struct WorldMapWriter<'a> {
     pub db: &'a Index,
@@ -53,6 +57,9 @@ impl<'a> WorldMapWriter<'a> {
         } else {
             self.overview(&descriptions, &stats).await?
         };
+        let all_claims = self.current_claims_all_regions()?;
+        let note_regions = self.note_region_map()?;
+        let todays_review = todays_review_findings(&all_claims, &note_regions);
         let mut markdown = String::from("# World Map\n\n");
         markdown.push_str(&format!("_{}_\n\n## Regions\n", overview));
 
@@ -70,9 +77,16 @@ impl<'a> WorldMapWriter<'a> {
             ));
         }
         markdown.push_str(&format!(
-            "\n## Today's review (auto-{})\n(challenger placeholder)\n",
+            "\n## Today's review (auto-{})\n",
             Utc::now().format("%Y-%m-%d")
         ));
+        if todays_review.is_empty() {
+            markdown.push_str("- none\n");
+        } else {
+            for line in todays_review {
+                markdown.push_str(&format!("- {line}\n"));
+            }
+        }
 
         let output = self.vault.join("world_map.md");
         atomic_write(&output, &markdown)?;
@@ -202,6 +216,92 @@ impl<'a> WorldMapWriter<'a> {
             .await?;
         Ok(response.text.trim().replace('\n', " "))
     }
+
+    fn current_claims_all_regions(&self) -> Result<Vec<Claim>> {
+        let conn = self.db.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, subject, predicate, object, note_id, span_start, span_end,
+                    span_fingerprint, valid_from, valid_until, confidence, privacy,
+                    extracted_by, extracted_at
+             FROM claims
+             WHERE valid_until IS NULL OR valid_until > ?",
+        )?;
+        let rows = stmt.query_map(params![Utc::now().to_rfc3339()], |row| {
+            let valid_from: String = row.get(8)?;
+            let valid_until: Option<String> = row.get(9)?;
+            let privacy_raw: String = row.get(11)?;
+            let extracted_at: String = row.get(13)?;
+            Ok(Claim {
+                id: row.get(0)?,
+                subject: row.get(1)?,
+                predicate: row.get(2)?,
+                object: row.get(3)?,
+                note_id: row.get(4)?,
+                span_start: row.get(5)?,
+                span_end: row.get(6)?,
+                span_fingerprint: row.get(7)?,
+                valid_from: chrono::DateTime::parse_from_rfc3339(&valid_from)
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            8,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?
+                    .with_timezone(&Utc),
+                valid_until: valid_until
+                    .as_deref()
+                    .map(|v| chrono::DateTime::parse_from_rfc3339(v))
+                    .transpose()
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            9,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?
+                    .map(|v| v.with_timezone(&Utc)),
+                confidence: row.get(10)?,
+                privacy: privacy_raw.parse().map_err(|_| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        11,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "invalid privacy",
+                        )),
+                    )
+                })?,
+                extracted_by: row.get(12)?,
+                extracted_at: chrono::DateTime::parse_from_rfc3339(&extracted_at)
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            13,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?
+                    .with_timezone(&Utc),
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn note_region_map(&self) -> Result<HashMap<String, String>> {
+        let conn = self.db.pool.get()?;
+        let mut stmt = conn.prepare("SELECT id, region FROM notes")?;
+        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (id, region) = row?;
+            out.insert(id, region);
+        }
+        Ok(out)
+    }
 }
 
 fn atomic_write(path: &Path, content: &str) -> Result<()> {
@@ -212,6 +312,111 @@ fn atomic_write(path: &Path, content: &str) -> Result<()> {
     fs::write(&tmp, content)?;
     fs::rename(&tmp, path)?;
     Ok(())
+}
+
+fn todays_review_findings(claims: &[Claim], note_regions: &HashMap<String, String>) -> Vec<String> {
+    #[derive(Clone)]
+    struct ReviewLine {
+        priority: u8,
+        support: usize,
+        text: String,
+    }
+    let mut lines = Vec::<ReviewLine>::new();
+
+    for item in detect_contradictions(claims) {
+        let left_regions = regions_for_notes(&item.left_source_note_ids, note_regions);
+        let right_regions = regions_for_notes(&item.right_source_note_ids, note_regions);
+        let cross_region = left_regions != right_regions;
+        let merged = merge_notes(&item.left_source_note_ids, &item.right_source_note_ids);
+        let support = item.left_source_note_ids.len() + item.right_source_note_ids.len();
+        let priority = if cross_region { 1 } else { 3 };
+        lines.push(ReviewLine {
+            priority,
+            support,
+            text: format!(
+                "**{}: {} disagreement** - {} ({} sources) vs {} ({} sources) [{}]",
+                humanize(&item.subject),
+                item.family,
+                item.left_object,
+                item.left_source_note_ids.len(),
+                item.right_object,
+                item.right_source_note_ids.len(),
+                render_notes(&merged)
+            ),
+        });
+    }
+
+    for item in detect_stale_dependencies(claims) {
+        let merged = merge_notes(&item.depends_on_source_note_ids, &item.superseded_source_note_ids);
+        let support = item.depends_on_source_note_ids.len() + item.superseded_source_note_ids.len();
+        lines.push(ReviewLine {
+            priority: 2,
+            support,
+            text: format!(
+                "**{}** depends on `{}` which is superseded by `{}` [{}]",
+                humanize(&item.dependent_subject),
+                item.stale_subject,
+                item.superseded_by,
+                render_notes(&merged)
+            ),
+        });
+    }
+
+    for item in detect_recent_decisions(claims) {
+        lines.push(ReviewLine {
+            priority: 4,
+            support: item.source_note_ids.len(),
+            text: format!(
+                "**{} -> {}** ({} supporting claims across {})",
+                humanize(&item.subject),
+                humanize(&item.object),
+                item.source_note_ids.len(),
+                render_notes(&item.source_note_ids)
+            ),
+        });
+    }
+
+    lines.sort_by(|a, b| {
+        a.priority
+            .cmp(&b.priority)
+            .then_with(|| b.support.cmp(&a.support))
+            .then_with(|| a.text.cmp(&b.text))
+    });
+    lines.into_iter().take(3).map(|line| line.text).collect()
+}
+
+fn regions_for_notes(notes: &[String], note_regions: &HashMap<String, String>) -> BTreeSet<String> {
+    notes
+        .iter()
+        .filter_map(|note| note_regions.get(note).cloned())
+        .collect()
+}
+
+fn merge_notes(left: &[String], right: &[String]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for note in left.iter().chain(right.iter()) {
+        if seen.insert(note.clone()) {
+            out.push(note.clone());
+        }
+    }
+    out
+}
+
+fn render_notes(notes: &[String]) -> String {
+    let shown = notes
+        .iter()
+        .take(3)
+        .map(|note| format!("[[{note}]]"))
+        .collect::<Vec<_>>();
+    if notes.len() <= 3 {
+        return shown.join(", ");
+    }
+    format!("{}, and {} more", shown.join(", "), notes.len() - 3)
+}
+
+fn humanize(value: &str) -> String {
+    value.replace('-', " ")
 }
 
 #[cfg(test)]

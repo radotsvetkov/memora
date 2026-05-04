@@ -58,12 +58,18 @@ pub async fn run(args: IndexArgs) -> Result<()> {
         .with_skip_contradiction_detection(args.no_contradict);
     let stats = indexer.full_rebuild().await?;
     println!(
-        "Indexed: inserted={}, skipped={}, errors={}",
-        stats.inserted, stats.skipped, stats.errors
+        "Indexed: {} notes, {} claims extracted.\nEmpty extractions: {}, Rate-limited: {}, Parse failures: {}, Invalid: {}.\nTotal errors: {}",
+        stats.inserted,
+        stats.claims_extracted,
+        stats.empty_extractions,
+        stats.error_rate_limited,
+        stats.error_parse,
+        stats.error_invalid,
+        stats.total_extraction_errors()
     );
     if stats.errors > 0 {
         eprintln!(
-            "\n{} notes failed. Re-run with RUST_LOG=warn for details.",
+            "\n{} notes had indexing failures. Re-run with RUST_LOG=warn for details.",
             stats.errors
         );
     }
@@ -72,6 +78,12 @@ pub async fn run(args: IndexArgs) -> Result<()> {
             "\nTip: For large vaults, --no-contradict speeds up first-time indexing significantly. \
              Contradiction detection runs continuously in `memora watch`."
         );
+    }
+    if stats.error_rate_limited > 0 {
+        return Err(anyhow!(
+            "indexing completed with {} rate-limited extraction failures",
+            stats.error_rate_limited
+        ));
     }
     Ok(())
 }

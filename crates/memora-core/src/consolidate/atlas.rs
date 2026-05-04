@@ -9,6 +9,11 @@ use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
 
 use crate::claims::{Claim, ClaimStore};
+use crate::challenger::{
+    detect_contradictions, detect_open_questions, detect_recent_decisions,
+    detect_stale_dependencies, Contradiction as ChallengerContradiction, Decision,
+    OpenQuestion, StaleDep,
+};
 use crate::consolidate::prompts::{REGION_OVERVIEW_PROMPT, SUBREGION_PROPOSAL_PROMPT};
 use crate::index::Index;
 use crate::note::{self, Privacy};
@@ -38,20 +43,6 @@ struct RegionNote {
     id: String,
     path: String,
     qvalue: f64,
-}
-
-#[derive(Debug, Clone)]
-struct DecisionRow {
-    title: String,
-    status: String,
-    decided_on: String,
-    claim_id: String,
-}
-
-#[derive(Debug, Clone)]
-struct StaleRow {
-    claim_id: String,
-    reason: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,9 +96,37 @@ impl<'a> AtlasWriter<'a> {
         } else {
             self.region_overview(region, &claims).await?
         };
-        let decisions = self.decisions_for_region(region)?;
-        let stale = self.stale_for_region(region)?;
-        let contradictions = self.contradictions_for_region(&note_ids)?;
+        let all_claims = self.current_claims_all_regions()?;
+        let note_regions = self.note_region_map()?;
+        let decisions = region_decisions(
+            region,
+            &note_ids,
+            &all_claims,
+            &note_regions,
+            detect_recent_decisions(&all_claims),
+        );
+        let stale = region_stale_dependencies(
+            region,
+            &note_ids,
+            &all_claims,
+            &note_regions,
+            detect_stale_dependencies(&all_claims),
+        );
+        let contradictions = region_contradictions(
+            region,
+            &note_ids,
+            &all_claims,
+            &note_regions,
+            detect_contradictions(&all_claims),
+        );
+        let open_questions = region_open_questions(
+            region,
+            &note_ids,
+            &all_claims,
+            &note_regions,
+            &decisions,
+            detect_open_questions(&all_claims),
+        );
         let atlas = build_atlas_markdown(
             region,
             &overview,
@@ -116,6 +135,7 @@ impl<'a> AtlasWriter<'a> {
             &decisions,
             &stale,
             &contradictions,
+            &open_questions,
         );
         let atlas_path = self.vault.join(region).join("_atlas.md");
         atomic_write(&atlas_path, &atlas)?;
@@ -276,22 +296,71 @@ impl<'a> AtlasWriter<'a> {
         ))
     }
 
-    fn decisions_for_region(&self, region: &str) -> Result<Vec<DecisionRow>> {
+    fn current_claims_all_regions(&self) -> Result<Vec<Claim>> {
         let conn = self.db.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT d.title, d.status, d.decided_on, d.claim_id
-             FROM decisions d
-             JOIN claims c ON c.id = d.claim_id
-             JOIN notes n ON n.id = c.note_id
-             WHERE n.region = ?
-             ORDER BY d.decided_on DESC",
+            "SELECT id, subject, predicate, object, note_id, span_start, span_end,
+                    span_fingerprint, valid_from, valid_until, confidence, privacy,
+                    extracted_by, extracted_at
+             FROM claims
+             WHERE valid_until IS NULL OR valid_until > ?",
         )?;
-        let rows = stmt.query_map(params![region], |row| {
-            Ok(DecisionRow {
-                title: row.get(0)?,
-                status: row.get(1)?,
-                decided_on: row.get(2)?,
-                claim_id: row.get(3)?,
+        let rows = stmt.query_map(params![Utc::now().to_rfc3339()], |row| {
+            let valid_from: String = row.get(8)?;
+            let valid_until: Option<String> = row.get(9)?;
+            let privacy_raw: String = row.get(11)?;
+            let extracted_at: String = row.get(13)?;
+            Ok(Claim {
+                id: row.get(0)?,
+                subject: row.get(1)?,
+                predicate: row.get(2)?,
+                object: row.get(3)?,
+                note_id: row.get(4)?,
+                span_start: row.get(5)?,
+                span_end: row.get(6)?,
+                span_fingerprint: row.get(7)?,
+                valid_from: chrono::DateTime::parse_from_rfc3339(&valid_from)
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            8,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?
+                    .with_timezone(&Utc),
+                valid_until: valid_until
+                    .as_deref()
+                    .map(|v| chrono::DateTime::parse_from_rfc3339(v))
+                    .transpose()
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            9,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?
+                    .map(|v| v.with_timezone(&Utc)),
+                confidence: row.get(10)?,
+                privacy: privacy_raw.parse().map_err(|_| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        11,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "invalid privacy",
+                        )),
+                    )
+                })?,
+                extracted_by: row.get(12)?,
+                extracted_at: chrono::DateTime::parse_from_rfc3339(&extracted_at)
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            13,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?
+                    .with_timezone(&Utc),
             })
         })?;
         let mut out = Vec::new();
@@ -301,39 +370,14 @@ impl<'a> AtlasWriter<'a> {
         Ok(out)
     }
 
-    fn stale_for_region(&self, region: &str) -> Result<Vec<StaleRow>> {
+    fn note_region_map(&self) -> Result<HashMap<String, String>> {
         let conn = self.db.pool.get()?;
-        let mut stmt = conn.prepare(
-            "SELECT sc.claim_id, sc.reason
-             FROM stale_claims sc
-             JOIN claims c ON c.id = sc.claim_id
-             JOIN notes n ON n.id = c.note_id
-             WHERE n.region = ?
-             ORDER BY sc.marked_at DESC, sc.claim_id ASC",
-        )?;
-        let rows = stmt.query_map(params![region], |row| {
-            Ok(StaleRow {
-                claim_id: row.get(0)?,
-                reason: row.get(1)?,
-            })
-        })?;
-        let mut out = Vec::new();
+        let mut stmt = conn.prepare("SELECT id, region FROM notes")?;
+        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+        let mut out = HashMap::new();
         for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-
-    fn contradictions_for_region(
-        &self,
-        note_ids: &HashSet<String>,
-    ) -> Result<Vec<(String, String)>> {
-        let pairs = self.claim_store.contradictions_unack()?;
-        let mut out = Vec::new();
-        for (left, right) in pairs {
-            if note_ids.contains(&left.note_id) || note_ids.contains(&right.note_id) {
-                out.push((left.id, right.id));
-            }
+            let (id, region) = row?;
+            out.insert(id, region);
         }
         Ok(out)
     }
@@ -503,10 +547,101 @@ fn build_atlas_markdown(
     overview: &str,
     subjects: &[String],
     claims_by_subject: &BTreeMap<String, Vec<Claim>>,
-    decisions: &[DecisionRow],
-    stale: &[StaleRow],
-    contradictions: &[(String, String)],
+    decisions: &[Decision],
+    stale: &[StaleDep],
+    contradictions: &[ChallengerContradiction],
+    open_questions: &[OpenQuestion],
 ) -> String {
+    #[derive(Debug)]
+    struct RenderTuple {
+        predicate: String,
+        object: Option<String>,
+        representative_claim_id: String,
+        source_notes: Vec<String>,
+        privacy: Privacy,
+    }
+
+    fn sources_suffix(source_notes: &[String]) -> String {
+        if source_notes.len() == 1 {
+            return format!("(source note: [[{}]])", source_notes[0]);
+        }
+        let (visible, remainder) = if source_notes.len() > 12 {
+            (&source_notes[..10], source_notes.len() - 10)
+        } else {
+            (source_notes, 0)
+        };
+        let mut rendered = visible
+            .iter()
+            .map(|note| format!("[[{note}]]"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if remainder > 0 {
+            rendered.push_str(&format!(", ... ({remainder} more)"));
+        }
+        format!("({} sources: {rendered})", source_notes.len())
+    }
+
+    fn deduped_claim_tuples(claims: &[Claim]) -> Vec<RenderTuple> {
+        let mut grouped = BTreeMap::<(String, Option<String>), Vec<&Claim>>::new();
+        for claim in claims {
+            grouped
+                .entry((claim.predicate.clone(), claim.object.clone()))
+                .or_default()
+                .push(claim);
+        }
+
+        let mut out = grouped
+            .into_iter()
+            .map(|((predicate, object), group_claims)| {
+                let mut claim_ids = group_claims
+                    .iter()
+                    .map(|claim| claim.id.clone())
+                    .collect::<Vec<_>>();
+                claim_ids.sort();
+                let representative_claim_id = claim_ids
+                    .first()
+                    .cloned()
+                    .expect("grouped claims should be non-empty");
+
+                let mut seen_notes = HashSet::new();
+                let mut source_notes = Vec::new();
+                for claim in &group_claims {
+                    if seen_notes.insert(claim.note_id.clone()) {
+                        source_notes.push(claim.note_id.clone());
+                    }
+                }
+
+                let privacy = group_claims
+                    .iter()
+                    .map(|claim| claim.privacy)
+                    .max()
+                    .unwrap_or(Privacy::Private);
+
+                RenderTuple {
+                    predicate,
+                    object,
+                    representative_claim_id,
+                    source_notes,
+                    privacy,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        out.sort_by(|a, b| {
+            b.source_notes
+                .len()
+                .cmp(&a.source_notes.len())
+                .then_with(|| a.predicate.cmp(&b.predicate))
+                .then_with(|| {
+                    a.object
+                        .as_deref()
+                        .unwrap_or("")
+                        .cmp(b.object.as_deref().unwrap_or(""))
+                })
+        });
+        out
+    }
+
     let mut out = String::new();
     out.push_str(&format!(
         "# Atlas: {region}\n\n_{overview}_\n\n## Subjects\n"
@@ -514,19 +649,21 @@ fn build_atlas_markdown(
     for subject in subjects {
         out.push_str(&format!("### {subject}\n"));
         if let Some(claims) = claims_by_subject.get(subject) {
-            for claim in claims {
-                if claim.privacy == Privacy::Secret {
+            for tuple in deduped_claim_tuples(claims) {
+                if tuple.privacy == Privacy::Secret {
                     out.push_str(&format!(
-                        "- [claim:{}] [redacted] [redacted] (source [[{}]])\n",
-                        claim.id, claim.note_id
+                        "- [claim:{}] [redacted] [redacted] {}\n",
+                        tuple.representative_claim_id,
+                        sources_suffix(&tuple.source_notes)
                     ));
                 } else {
+                    let object_display = tuple.object.as_deref().unwrap_or("(unary)");
                     out.push_str(&format!(
-                        "- [claim:{}] {} {} (source note: [[{}]])\n",
-                        claim.id,
-                        claim.predicate,
-                        claim.object_display(),
-                        claim.note_id
+                        "- [claim:{}] {} {} {}\n",
+                        tuple.representative_claim_id,
+                        tuple.predicate,
+                        object_display,
+                        sources_suffix(&tuple.source_notes)
                     ));
                 }
             }
@@ -540,8 +677,11 @@ fn build_atlas_markdown(
     } else {
         for item in decisions {
             out.push_str(&format!(
-                "- {} ({}, {}, [claim:{}])\n",
-                item.title, item.status, item.decided_on, item.claim_id
+                "- **{} -> {}** ({} supporting claims across {})\n",
+                humanize_term(&item.subject),
+                humanize_term(&item.object),
+                item.source_note_ids.len(),
+                source_note_list(&item.source_note_ids)
             ));
         }
     }
@@ -551,7 +691,18 @@ fn build_atlas_markdown(
         out.push_str("- none\n");
     } else {
         for item in stale {
-            out.push_str(&format!("- [claim:{}] {}\n", item.claim_id, item.reason));
+            out.push_str(&format!(
+                "- **{}** depends on `{}` which is superseded by `{}` ({} depends_on sources; {} superseded_by sources: {})\n",
+                humanize_term(&item.dependent_subject),
+                item.stale_subject,
+                item.superseded_by,
+                item.depends_on_source_note_ids.len(),
+                item.superseded_source_note_ids.len(),
+                source_note_list(&merged_sources(
+                    &item.depends_on_source_note_ids,
+                    &item.superseded_source_note_ids
+                ))
+            ));
         }
     }
 
@@ -559,11 +710,231 @@ fn build_atlas_markdown(
     if contradictions.is_empty() {
         out.push_str("- none\n");
     } else {
-        for (left, right) in contradictions {
-            out.push_str(&format!("- [claim:{left}] contradicts [claim:{right}]\n"));
+        for item in contradictions {
+            out.push_str(&format!(
+                "- **{}: {} disagreement** - {} ({} sources) vs {} ({} sources) [{}]\n",
+                humanize_term(&item.subject),
+                item.family,
+                item.left_object,
+                item.left_source_note_ids.len(),
+                item.right_object,
+                item.right_source_note_ids.len(),
+                source_note_list(&merged_sources(
+                    &item.left_source_note_ids,
+                    &item.right_source_note_ids
+                ))
+            ));
+        }
+    }
+    out.push_str("\n## Open questions\n");
+    if open_questions.is_empty() {
+        out.push_str("- none\n");
+    } else {
+        for item in open_questions {
+            out.push_str(&format!(
+                "- **{}: {}** - {} ({} supporting claims across {})\n",
+                humanize_term(&item.subject),
+                item.object,
+                item.family.replace('_', " "),
+                item.source_note_ids.len(),
+                source_note_list(&item.source_note_ids)
+            ));
         }
     }
     out
+}
+
+fn merged_sources(left: &[String], right: &[String]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for note in left.iter().chain(right.iter()) {
+        if seen.insert(note.clone()) {
+            out.push(note.clone());
+        }
+    }
+    out
+}
+
+fn source_note_list(notes: &[String]) -> String {
+    let shown = notes
+        .iter()
+        .take(3)
+        .map(|note| format!("[[{note}]]"))
+        .collect::<Vec<_>>();
+    if notes.len() <= 3 {
+        return shown.join(", ");
+    }
+    format!("{}, and {} more", shown.join(", "), notes.len() - 3)
+}
+
+fn humanize_term(value: &str) -> String {
+    value.replace('-', " ")
+}
+
+fn region_decisions(
+    region: &str,
+    note_ids: &HashSet<String>,
+    all_claims: &[Claim],
+    note_regions: &HashMap<String, String>,
+    decisions: Vec<Decision>,
+) -> Vec<Decision> {
+    let claim_by_id = all_claims
+        .iter()
+        .map(|claim| (claim.id.clone(), claim))
+        .collect::<HashMap<_, _>>();
+    decisions
+        .into_iter()
+        .filter(|decision| {
+            decision.supporting_claim_ids.iter().any(|claim_id| {
+                claim_by_id
+                    .get(claim_id)
+                    .is_some_and(|claim| claim_in_region(region, note_ids, note_regions, claim))
+            })
+        })
+        .take(5)
+        .collect()
+}
+
+fn region_stale_dependencies(
+    region: &str,
+    note_ids: &HashSet<String>,
+    all_claims: &[Claim],
+    note_regions: &HashMap<String, String>,
+    stale: Vec<StaleDep>,
+) -> Vec<StaleDep> {
+    let claim_by_id = all_claims
+        .iter()
+        .map(|claim| (claim.id.clone(), claim))
+        .collect::<HashMap<_, _>>();
+    stale
+        .into_iter()
+        .filter(|item| {
+            item.depends_on_claim_ids
+                .iter()
+                .chain(item.superseded_claim_ids.iter())
+                .any(|claim_id| {
+                    claim_by_id
+                        .get(claim_id)
+                        .is_some_and(|claim| claim_in_region(region, note_ids, note_regions, claim))
+                })
+        })
+        .take(5)
+        .collect()
+}
+
+fn region_contradictions(
+    region: &str,
+    note_ids: &HashSet<String>,
+    all_claims: &[Claim],
+    note_regions: &HashMap<String, String>,
+    contradictions: Vec<ChallengerContradiction>,
+) -> Vec<ChallengerContradiction> {
+    let claim_by_id = all_claims
+        .iter()
+        .map(|claim| (claim.id.clone(), claim))
+        .collect::<HashMap<_, _>>();
+    contradictions
+        .into_iter()
+        .filter(|item| {
+            item.left_claim_ids
+                .iter()
+                .chain(item.right_claim_ids.iter())
+                .any(|claim_id| {
+                    claim_by_id
+                        .get(claim_id)
+                        .is_some_and(|claim| claim_in_region(region, note_ids, note_regions, claim))
+                })
+        })
+        .take(5)
+        .collect()
+}
+
+fn region_open_questions(
+    region: &str,
+    note_ids: &HashSet<String>,
+    all_claims: &[Claim],
+    note_regions: &HashMap<String, String>,
+    decisions: &[Decision],
+    questions: Vec<OpenQuestion>,
+) -> Vec<OpenQuestion> {
+    let region_subjects = region_subjects(region, note_ids, all_claims, note_regions);
+    let decided_pairs = decided_pairs(decisions);
+    questions
+        .into_iter()
+        .filter(|item| region_subjects.contains(&item.subject))
+        .filter(|item| {
+            let item_subject = item.subject.trim().to_ascii_lowercase();
+            let item_object = normalize_decision_like_object(&item.object);
+            !decided_pairs.iter().any(|(subject, object)| {
+                subject == &item_subject && decision_objects_equivalent(object, &item_object)
+            })
+        })
+        .take(5)
+        .collect()
+}
+
+fn region_subjects(
+    region: &str,
+    note_ids: &HashSet<String>,
+    all_claims: &[Claim],
+    note_regions: &HashMap<String, String>,
+) -> HashSet<String> {
+    all_claims
+        .iter()
+        .filter(|claim| claim_in_region(region, note_ids, note_regions, claim))
+        .map(|claim| claim.subject.trim().to_ascii_lowercase())
+        .collect()
+}
+
+fn decided_pairs(decisions: &[Decision]) -> HashSet<(String, String)> {
+    decisions
+        .iter()
+        .map(|decision| {
+            (
+                decision.subject.trim().to_ascii_lowercase(),
+                normalize_decision_like_object(&decision.object),
+            )
+        })
+        .collect()
+}
+
+fn normalize_decision_like_object(value: &str) -> String {
+    let mut normalized = value
+        .trim()
+        .to_ascii_lowercase()
+        .replace([' ', '_'], "-");
+    while normalized.contains("--") {
+        normalized = normalized.replace("--", "-");
+    }
+    normalized = normalized.trim_matches('-').to_string();
+    for suffix in ["-templates", "-generator", "-default", "-v2"] {
+        if normalized.ends_with(suffix) {
+            normalized = normalized.trim_end_matches(suffix).to_string();
+        }
+    }
+    normalized
+}
+
+fn decision_objects_equivalent(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    if left.len() >= 4 && right.len() >= 4 && (left.contains(right) || right.contains(left)) {
+        return true;
+    }
+    false
+}
+
+fn claim_in_region(
+    region: &str,
+    note_ids: &HashSet<String>,
+    note_regions: &HashMap<String, String>,
+    claim: &Claim,
+) -> bool {
+    note_ids.contains(&claim.note_id)
+        || note_regions
+            .get(&claim.note_id)
+            .is_some_and(|claim_region| claim_region == region)
 }
 
 fn atomic_write(path: &Path, content: &str) -> Result<()> {
@@ -662,6 +1033,35 @@ mod tests {
         }
     }
 
+    fn make_claim_for_rendering(
+        claim_id: &str,
+        note_id: &str,
+        subject: &str,
+        predicate: &str,
+        object: Option<&str>,
+    ) -> Claim {
+        let valid_from = Utc
+            .with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
+            .single()
+            .expect("valid datetime");
+        Claim {
+            id: claim_id.to_string(),
+            subject: subject.to_string(),
+            predicate: predicate.to_string(),
+            object: object.map(ToString::to_string),
+            note_id: note_id.to_string(),
+            span_start: 0,
+            span_end: 4,
+            span_fingerprint: Claim::compute_fingerprint("Body"),
+            valid_from,
+            valid_until: None,
+            confidence: 0.9,
+            privacy: Privacy::Private,
+            extracted_by: "test/atlas".to_string(),
+            extracted_at: valid_from,
+        }
+    }
+
     struct CountingLlm {
         calls: Arc<AtomicUsize>,
     }
@@ -724,5 +1124,118 @@ mod tests {
         let atlas_text = fs::read_to_string(&atlas_path)?;
         assert!(atlas_text.contains(ATLAS_LOW_CONTENT_OVERVIEW));
         Ok(())
+    }
+
+    #[test]
+    fn open_questions_excludes_decided_pairs_after_normalization() {
+        let claims = vec![make_claim_for_rendering(
+            "seed",
+            "akmon-01",
+            "akmon",
+            "uses_client_generator",
+            Some("stainless-templates"),
+        )];
+        let note_ids = HashSet::from(["akmon-01".to_string()]);
+        let note_regions = HashMap::from([("akmon-01".to_string(), "semantic/projects/akmon".to_string())]);
+        let decisions = vec![Decision {
+            subject: "akmon".to_string(),
+            object: "stainless templates".to_string(),
+            source_note_ids: vec!["akmon-01".to_string()],
+            supporting_claim_ids: vec!["c1".to_string(), "c2".to_string()],
+        }];
+        let questions = vec![
+            OpenQuestion {
+                subject: "akmon".to_string(),
+                family: "decision_candidate".to_string(),
+                object: "stainless-default".to_string(),
+                source_note_ids: vec!["ep-daily-2026-04-18".to_string()],
+                supporting_claim_ids: vec!["q1".to_string()],
+            },
+            OpenQuestion {
+                subject: "akmon".to_string(),
+                family: "decision_candidate".to_string(),
+                object: "openapi-generator".to_string(),
+                source_note_ids: vec!["ep-daily-2026-04-12".to_string()],
+                supporting_claim_ids: vec!["q2".to_string()],
+            },
+        ];
+
+        let filtered = region_open_questions(
+            "semantic/projects/akmon",
+            &note_ids,
+            &claims,
+            &note_regions,
+            &decisions,
+            questions,
+        );
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].object, "openapi-generator");
+    }
+
+    #[test]
+    fn atlas_deduplicates_verbatim_claims_and_truncates_long_source_lists() {
+        let mut claims_by_subject = BTreeMap::<String, Vec<Claim>>::new();
+        let mut claims = Vec::new();
+
+        for i in 1..=5 {
+            claims.push(make_claim_for_rendering(
+                &format!("dup-id-{i:02}"),
+                &format!("akmon-{i:02}"),
+                "akmon",
+                "ingests",
+                Some("partner-events"),
+            ));
+        }
+
+        claims.push(make_claim_for_rendering(
+            "singleton-id",
+            "akmon-06",
+            "akmon",
+            "generated_with",
+            Some("stainless-templates"),
+        ));
+
+        for i in 1..=13 {
+            claims.push(make_claim_for_rendering(
+                &format!("unary-id-{i:02}"),
+                &format!("akmon-u-{i:02}"),
+                "akmon",
+                "has_field_observation_notes",
+                None,
+            ));
+        }
+
+        claims_by_subject.insert("akmon".to_string(), claims);
+
+        let rendered = build_atlas_markdown(
+            "semantic/projects/akmon",
+            "overview",
+            &["akmon".to_string()],
+            &claims_by_subject,
+            &[],
+            &[],
+            &[],
+            &[],
+        );
+
+        assert!(
+            rendered.contains(
+                "- [claim:unary-id-01] has_field_observation_notes (unary) (13 sources: [[akmon-u-01]], [[akmon-u-02]], [[akmon-u-03]], [[akmon-u-04]], [[akmon-u-05]], [[akmon-u-06]], [[akmon-u-07]], [[akmon-u-08]], [[akmon-u-09]], [[akmon-u-10]], ... (3 more))"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "- [claim:dup-id-01] ingests partner-events (5 sources: [[akmon-01]], [[akmon-02]], [[akmon-03]], [[akmon-04]], [[akmon-05]])"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "- [claim:singleton-id] generated_with stainless-templates (source note: [[akmon-06]])"
+            ),
+            "{rendered}"
+        );
+        assert_eq!(rendered.matches("ingests partner-events").count(), 1);
     }
 }

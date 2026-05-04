@@ -5,8 +5,9 @@ use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
+use thiserror::Error;
 
-use memora_llm::LlmClient;
+use memora_llm::{LlmClient, LlmError};
 
 use crate::claims::privacy_markers::{parse_privacy_spans, privacy_for_span};
 use crate::claims::Claim;
@@ -154,8 +155,42 @@ pub struct ClaimExtractor {
     pub model_label: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaimExtractionDisposition {
+    Extracted,
+    Empty,
+    AllInvalidAfterRetry,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClaimExtractionResult {
+    pub claims: Vec<Claim>,
+    pub disposition: ClaimExtractionDisposition,
+}
+
+#[derive(Debug, Error)]
+pub enum ClaimExtractionError {
+    #[error("rate limited")]
+    RateLimited,
+    #[error("failed to parse extraction response: {0}")]
+    Parse(String),
+    #[error("llm call failed: {0}")]
+    Llm(String),
+}
+
 impl ClaimExtractor {
     pub async fn extract(&self, note: &Note, body: &str) -> Result<Vec<Claim>> {
+        self.extract_with_metadata(note, body)
+            .await
+            .map(|result| result.claims)
+            .map_err(anyhow::Error::from)
+    }
+
+    pub async fn extract_with_metadata(
+        &self,
+        note: &Note,
+        body: &str,
+    ) -> Result<ClaimExtractionResult, ClaimExtractionError> {
         let marker_spans = parse_privacy_spans(body);
         let prompt = self.build_prompt(note, body);
         let text = self
@@ -167,7 +202,7 @@ impl ClaimExtractor {
                     error = %err,
                     "claim extractor LLM call failed"
                 );
-                anyhow::Error::from(err)
+                classify_llm_error(err)
             })?;
 
         let records = parse_extraction_response(&text).map_err(|err| {
@@ -176,10 +211,17 @@ impl ClaimExtractor {
                 raw_response = %text,
                 "claim extractor failed to parse JSON response"
             );
-            err
+            ClaimExtractionError::Parse(err.to_string())
         })?;
 
         let mut claims = Self::validate_records(note, body, &marker_spans, &records, self);
+
+        if claims.is_empty() && records.is_empty() {
+            return Ok(ClaimExtractionResult {
+                claims,
+                disposition: ClaimExtractionDisposition::Empty,
+            });
+        }
 
         if claims.is_empty() && !records.is_empty() {
             tracing::info!(
@@ -194,7 +236,7 @@ impl ClaimExtractor {
                 .await
                 .map_err(|err| {
                     tracing::warn!(error = %err, "claim extractor retry LLM call failed");
-                    anyhow::Error::from(err)
+                    classify_llm_error(err)
                 })?;
 
             let retry_records = parse_extraction_response(&retry_text).map_err(|err| {
@@ -203,13 +245,27 @@ impl ClaimExtractor {
                     raw_response = %retry_text,
                     "claim extractor retry failed to parse JSON response"
                 );
-                err
+                ClaimExtractionError::Parse(err.to_string())
             })?;
 
             claims = Self::validate_records(note, body, &marker_spans, &retry_records, self);
+            let disposition = if claims.is_empty() && !retry_records.is_empty() {
+                ClaimExtractionDisposition::AllInvalidAfterRetry
+            } else if claims.is_empty() {
+                ClaimExtractionDisposition::Empty
+            } else {
+                ClaimExtractionDisposition::Extracted
+            };
+            return Ok(ClaimExtractionResult {
+                claims,
+                disposition,
+            });
         }
 
-        Ok(claims)
+        Ok(ClaimExtractionResult {
+            claims,
+            disposition: ClaimExtractionDisposition::Extracted,
+        })
     }
 
     fn validate_records(
@@ -270,6 +326,13 @@ impl ClaimExtractor {
                 "{{NOTE_BODY_WITH_OFFSETS}}",
                 &render_body_with_offsets(body),
             )
+    }
+}
+
+fn classify_llm_error(err: LlmError) -> ClaimExtractionError {
+    match err {
+        LlmError::RateLimited => ClaimExtractionError::RateLimited,
+        other => ClaimExtractionError::Llm(other.to_string()),
     }
 }
 

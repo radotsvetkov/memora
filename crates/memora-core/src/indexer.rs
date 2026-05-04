@@ -7,7 +7,8 @@ use chrono::{DateTime, Utc};
 use futures::stream::{self, StreamExt};
 
 use crate::claims::{
-    ClaimExtractor, ClaimStore, ContradictionDetector, Provenance, StalenessTracker,
+    ClaimExtractionDisposition, ClaimExtractionError, ClaimExtractor, ClaimStore,
+    ContradictionDetector, Provenance, StalenessTracker,
 };
 use crate::embed::{normalize_text, Embedder};
 use crate::index::{Index, RebuildStats, VectorIndex};
@@ -33,8 +34,17 @@ pub enum RefsSyncMode {
 enum RebuildPathOutcome {
     ParseFail(anyhow::Error),
     AlignFail(anyhow::Error),
-    UpsertOk(String),
+    UpsertOk(String, UpsertStats),
     UpsertFail(String, anyhow::Error),
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct UpsertStats {
+    claims_extracted: usize,
+    empty_extractions: usize,
+    error_rate_limited: usize,
+    error_parse: usize,
+    error_invalid: usize,
 }
 
 pub struct Indexer<'a> {
@@ -168,13 +178,13 @@ impl<'a> Indexer<'a> {
                     )
                     .await
                     {
-                        Ok(()) => {
+                        Ok(upsert_stats) => {
                             tracing::debug!(
                                 path = %path.display(),
                                 indexing_parallelism = parallel,
                                 "parallel indexing upsert complete"
                             );
-                            (path, RebuildPathOutcome::UpsertOk(id))
+                            (path, RebuildPathOutcome::UpsertOk(id, upsert_stats))
                         }
                         Err(err) => (path, RebuildPathOutcome::UpsertFail(id, err)),
                     }
@@ -189,9 +199,17 @@ impl<'a> Indexer<'a> {
 
         for (path, outcome) in results {
             match outcome {
-                RebuildPathOutcome::UpsertOk(id) => {
+                RebuildPathOutcome::UpsertOk(id, upsert_stats) => {
                     seen_ids.insert(id);
                     stats.inserted += 1;
+                    stats.claims_extracted += upsert_stats.claims_extracted;
+                    stats.empty_extractions += upsert_stats.empty_extractions;
+                    stats.error_rate_limited += upsert_stats.error_rate_limited;
+                    stats.error_parse += upsert_stats.error_parse;
+                    stats.error_invalid += upsert_stats.error_invalid;
+                    stats.errors += upsert_stats.error_rate_limited
+                        + upsert_stats.error_parse
+                        + upsert_stats.error_invalid;
                 }
                 RebuildPathOutcome::UpsertFail(id, err) => {
                     seen_ids.insert(id);
@@ -306,6 +324,7 @@ impl<'a> Indexer<'a> {
             parsed,
         )
         .await
+        .map(|_| ())
     }
 }
 
@@ -341,9 +360,10 @@ async fn upsert_note_inner(
     extract_reference_notes: bool,
     skip_contradiction_detection: bool,
     parsed: &crate::note::Note,
-) -> Result<()> {
+) -> Result<UpsertStats> {
     let claim_store = ClaimStore::new(index);
     let mut old_claim_ids = Vec::new();
+    let mut upsert_stats = UpsertStats::default();
     if let Some(_extractor) = claim_extractor {
         let should_extract = extract_reference_notes || parsed.fm.source != NoteSource::Reference;
         if should_extract {
@@ -356,11 +376,12 @@ async fn upsert_note_inner(
     if let Some(extractor) = claim_extractor {
         let should_extract = extract_reference_notes || parsed.fm.source != NoteSource::Reference;
         if should_extract {
-            match extractor.extract(parsed, &parsed.body).await {
-                Ok(claims) => {
+            match extractor.extract_with_metadata(parsed, &parsed.body).await {
+                Ok(result) => {
+                    upsert_stats.claims_extracted += result.claims.len();
                     index.with_transaction(|tx| {
                         claim_store.delete_for_note_in_tx(tx, &parsed.fm.id)?;
-                        for claim in &claims {
+                        for claim in &result.claims {
                             claim_store.upsert_in_tx(tx, claim)?;
                         }
                         Ok(())
@@ -370,20 +391,31 @@ async fn upsert_note_inner(
                     let stale_tracker = StalenessTracker::new(index, &provenance);
                     stale_tracker.mark_source_edited_claims(&old_claim_ids)?;
 
-                    if claims.is_empty() {
-                        tracing::info!(
-                            path = %parsed.path.display(),
-                            "no claims extracted from note (model returned empty array)"
-                        );
+                    match result.disposition {
+                        ClaimExtractionDisposition::Empty => {
+                            upsert_stats.empty_extractions += 1;
+                            tracing::info!(
+                                path = %parsed.path.display(),
+                                "no claims extracted from note (model returned empty array)"
+                            );
+                        }
+                        ClaimExtractionDisposition::AllInvalidAfterRetry => {
+                            upsert_stats.error_invalid += 1;
+                            tracing::warn!(
+                                path = %parsed.path.display(),
+                                "claim extraction returned only invalid claims after retry; note indexed without claims"
+                            );
+                        }
+                        ClaimExtractionDisposition::Extracted => {}
                     }
 
-                    if !skip_contradiction_detection && !claims.is_empty() {
+                    if !skip_contradiction_detection && !result.claims.is_empty() {
                         let contradiction_detector = ContradictionDetector {
                             store: &claim_store,
                             stale: &stale_tracker,
                             llm: Arc::clone(&extractor.llm),
                         };
-                        for claim in &claims {
+                        for claim in &result.claims {
                             let superseded = contradiction_detector.check_new_claim(claim).await?;
                             if !superseded.is_empty() {
                                 tracing::info!(
@@ -396,6 +428,13 @@ async fn upsert_note_inner(
                     }
                 }
                 Err(e) => {
+                    match &e {
+                        ClaimExtractionError::RateLimited => upsert_stats.error_rate_limited += 1,
+                        ClaimExtractionError::Parse(_) => upsert_stats.error_parse += 1,
+                        // Non-rate-limited extraction failures are still surfaced as parse bucket
+                        // for now so they are not silently dropped in launch metrics.
+                        ClaimExtractionError::Llm(_) => upsert_stats.error_parse += 1,
+                    }
                     tracing::warn!(
                         path = %parsed.path.display(),
                         error = %e,
@@ -423,7 +462,7 @@ async fn upsert_note_inner(
         .lock()
         .map_err(|_| anyhow::anyhow!("vector index mutex poisoned"))?
         .upsert(&parsed.fm.id, &vector)?;
-    Ok(())
+    Ok(upsert_stats)
 }
 
 fn align_frontmatter_to_filesystem_shared(

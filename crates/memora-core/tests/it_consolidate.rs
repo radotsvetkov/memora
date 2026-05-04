@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use memora_core::claims::{Claim, ClaimStore};
 use memora_core::consolidate::atlas::AtlasWriter;
+use memora_core::consolidate::world_map::WorldMapWriter;
 use memora_core::note::{self, Frontmatter, Note, NoteSource, Privacy};
 use memora_core::Index;
 use memora_llm::{CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError};
@@ -292,5 +293,151 @@ async fn consolidate_triggers_subregion_split_for_large_regions() -> Result<()> 
     let moved_path = moved_entry.path();
     let moved_note = note::parse(&moved_path)?;
     assert!(moved_note.fm.region.starts_with("mega/split-a"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn consolidate_surfaces_challenger_findings_in_atlas_and_world_map() -> Result<()> {
+    let temp = tempdir()?;
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(&vault)?;
+    let db_path = temp.path().join("index").join("memora.db");
+    let index = Index::open(&db_path)?;
+    let store = ClaimStore::new(&index);
+
+    let notes = [
+        ("semantic/projects/akmon", "akmon-01"),
+        ("semantic/projects/akmon", "akmon-02"),
+        ("semantic/projects/csv-tool", "csv-01"),
+        ("semantic/projects/csv-tool", "csv-02"),
+        ("semantic/projects/memora", "memora-01"),
+        ("semantic/projects/memora", "memora-02"),
+        ("episodic", "ep-01"),
+        ("episodic", "ep-02"),
+    ];
+    for (region, note_id) in notes {
+        let path = write_note(
+            &vault,
+            region,
+            &format!("{note_id}.md"),
+            note_id,
+            &format!("summary {note_id}"),
+        )?;
+        let parsed = note::parse(&path)?;
+        index.upsert_note(&parsed, &parsed.body)?;
+    }
+
+    store.upsert(&make_claim(
+        "akmon-01",
+        "akmon",
+        "uses_api_client_generator",
+        "stainless-templates",
+        Privacy::Private,
+    ))?;
+    store.upsert(&make_claim(
+        "akmon-02",
+        "akmon",
+        "will_switch_default_to",
+        "stainless-templates",
+        Privacy::Private,
+    ))?;
+    store.upsert(&make_claim(
+        "akmon-01",
+        "akmon",
+        "uses_worker_model",
+        "single-process",
+        Privacy::Private,
+    ))?;
+    store.upsert(&make_claim(
+        "akmon-02",
+        "akmon",
+        "uses_architecture",
+        "distributed-workers",
+        Privacy::Private,
+    ))?;
+
+    store.upsert(&make_claim(
+        "csv-01",
+        "csv-tool",
+        "uses_language",
+        "rust",
+        Privacy::Private,
+    ))?;
+    store.upsert(&make_claim(
+        "ep-01",
+        "csv-tool",
+        "implemented_in",
+        "python",
+        Privacy::Private,
+    ))?;
+
+    store.upsert(&make_claim(
+        "memora-01",
+        "retrieval-eval-notes",
+        "superseded_by",
+        "retrieval-eval-notes-v2",
+        Privacy::Private,
+    ))?;
+    store.upsert(&make_claim(
+        "memora-02",
+        "staleness-case-a-synthesis",
+        "depends_on",
+        "retrieval-eval-notes",
+        Privacy::Private,
+    ))?;
+    store.upsert(&make_claim(
+        "memora-01",
+        "memora",
+        "decision_pending",
+        "precision-vs-recall-tradeoff",
+        Privacy::Private,
+    ))?;
+    store.upsert(&make_claim(
+        "ep-02",
+        "memora",
+        "design_question",
+        "precision-vs-recall",
+        Privacy::Private,
+    ))?;
+
+    let llm = MockConsolidateLlm {
+        subregion_claim_ids: vec![],
+    };
+    let atlas = AtlasWriter {
+        db: &index,
+        claim_store: &store,
+        llm: &llm,
+        vault: &vault,
+    };
+    atlas.rebuild_region("semantic/projects/akmon").await?;
+    atlas.rebuild_region("semantic/projects/csv-tool").await?;
+    atlas.rebuild_region("semantic/projects/memora").await?;
+
+    let world = WorldMapWriter {
+        db: &index,
+        claim_store: &store,
+        llm: &llm,
+        vault: &vault,
+    };
+    world.rebuild().await?;
+
+    let akmon = fs::read_to_string(vault.join("semantic/projects/akmon/_atlas.md"))?;
+    assert!(akmon.contains("## Recent decisions"));
+    assert!(akmon.contains("stainless templates"));
+
+    let csv = fs::read_to_string(vault.join("semantic/projects/csv-tool/_atlas.md"))?;
+    assert!(csv.contains("## Contradictions"));
+    assert!(csv.contains("rust"));
+    assert!(csv.contains("python"));
+
+    let memora = fs::read_to_string(vault.join("semantic/projects/memora/_atlas.md"))?;
+    assert!(memora.contains("## Stale dependencies"));
+    assert!(memora.contains("staleness case a synthesis"));
+    assert!(memora.contains("retrieval-eval-notes"));
+    assert!(memora.contains("## Open questions"));
+
+    let world_map = fs::read_to_string(vault.join("world_map.md"))?;
+    assert!(world_map.contains("## Today's review"));
+    assert!(!world_map.contains("(challenger placeholder)"));
     Ok(())
 }

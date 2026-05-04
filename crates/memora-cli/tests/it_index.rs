@@ -78,8 +78,8 @@ Body
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stdout.contains("errors=1"),
-        "expected one indexing error in summary, got stdout: {stdout}"
+        stdout.contains("Indexed: 1 notes, 0 claims extracted."),
+        "expected new indexing summary line, got stdout: {stdout}"
     );
     assert!(
         stderr.contains("failed to index note"),

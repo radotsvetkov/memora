@@ -30,7 +30,9 @@ pub fn scan(root: &Path) -> impl Iterator<Item = PathBuf> {
         .filter(|entry| entry.file_type().is_file())
         .map(DirEntry::into_path)
         .filter(|path| {
-            path.extension().and_then(|ext| ext.to_str()) == Some("md") && !is_hidden_file(path)
+            path.extension().and_then(|ext| ext.to_str()) == Some("md")
+                && !is_hidden_file(path)
+                && !is_generated_atlas_or_index(path)
         })
 }
 
@@ -130,7 +132,13 @@ fn is_watchable_markdown(path: &Path) -> bool {
     let in_memora = path
         .components()
         .any(|component| component.as_os_str() == ".memora");
-    is_markdown && !in_memora && !is_under_hidden_dir(path)
+    is_markdown && !in_memora && !is_under_hidden_dir(path) && !is_generated_atlas_or_index(path)
+}
+
+fn is_generated_atlas_or_index(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, "_atlas.md" | "_index.md"))
 }
 
 #[cfg(test)]
@@ -162,7 +170,6 @@ mod tests {
 
         let expected = BTreeSet::from([
             PathBuf::from("world_map.md"),
-            PathBuf::from("work/_atlas.md"),
             PathBuf::from("work/team-sync.md"),
             PathBuf::from("personal/example.md"),
         ]);
@@ -180,5 +187,29 @@ mod tests {
 
         let scanned: Vec<_> = scan(root.path()).collect();
         assert_eq!(scanned, vec![visible]);
+    }
+
+    #[test]
+    fn excludes_generated_atlas_and_index_from_scan_and_watch() {
+        let root = tempdir().expect("create temp dir");
+        let atlas = root.path().join("_atlas.md");
+        let index = root.path().join("_index.md");
+        let normal = root.path().join("normal.md");
+
+        fs::write(&atlas, "# atlas").expect("write atlas");
+        fs::write(&index, "# index").expect("write index");
+        fs::write(&normal, "# normal").expect("write normal");
+
+        let scanned: BTreeSet<_> = scan(root.path()).collect();
+        assert!(scanned.contains(&normal));
+        assert!(!scanned.contains(&atlas));
+        assert!(!scanned.contains(&index));
+
+        let watchable_normal = Path::new("/vault/normal.md");
+        let watchable_atlas = Path::new("/vault/_atlas.md");
+        let watchable_index = Path::new("/vault/_index.md");
+        assert!(is_watchable_markdown(watchable_normal));
+        assert!(!is_watchable_markdown(watchable_atlas));
+        assert!(!is_watchable_markdown(watchable_index));
     }
 }

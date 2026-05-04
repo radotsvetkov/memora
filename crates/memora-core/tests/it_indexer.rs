@@ -6,8 +6,10 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use memora_core::claims::ClaimExtractor;
 use memora_core::indexer::{FrontmatterFixMode, Indexer};
 use memora_core::{note, Embedder, Index, Vault, VaultEvent, VectorIndex};
+use memora_llm::{CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError};
 use tempfile::tempdir;
 
 fn write_note(path: &Path, id: &str, summary: &str, tags: &[&str], body: &str) -> Result<()> {
@@ -127,6 +129,23 @@ impl Embedder for DeterministicEmbedder {
 
     fn model_id(&self) -> &str {
         &self.model_id
+    }
+}
+
+struct RateLimitedExtractorLlm;
+
+#[async_trait]
+impl LlmClient for RateLimitedExtractorLlm {
+    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+        Err(LlmError::RateLimited)
+    }
+
+    fn model_name(&self) -> &str {
+        "test/rate-limited"
+    }
+
+    fn destination(&self) -> LlmDestination {
+        LlmDestination::CloudKnown
     }
 }
 
@@ -637,6 +656,46 @@ async fn parallel_indexing_processes_all_notes() -> Result<()> {
     assert_eq!(stats.inserted, 20);
     assert_eq!(stats.errors, 0);
     assert_eq!(index.all_ids()?.len(), 20);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn full_rebuild_counts_rate_limited_extractions_as_errors() -> Result<()> {
+    let temp = tempdir()?;
+    let vault_root = temp.path().join("vault");
+    fs::create_dir_all(&vault_root)?;
+    let note_path = vault_root.join("rate-limited.md");
+    write_note(
+        &note_path,
+        "rate-limited-note",
+        "Rate limited summary",
+        &["rate-limit"],
+        "akmon decided to switch to stainless templates for generation.",
+    )?;
+
+    let index_path = temp.path().join("index").join("memora.db");
+    let index = Index::open(&index_path)?;
+    let vault = Vault::new(&vault_root);
+    let embedder: Arc<dyn Embedder> = Arc::new(DeterministicEmbedder::new(64));
+    let vector_index = Arc::new(Mutex::new(VectorIndex::open_or_create(
+        &temp.path().join("index").join("vectors"),
+        embedder.dim(),
+    )?));
+    let claim_extractor = ClaimExtractor {
+        llm: Arc::new(RateLimitedExtractorLlm),
+        model_label: "test/rate-limited".to_string(),
+    };
+    let indexer = Indexer::new(&vault, &index, embedder, vector_index).with_claims(claim_extractor);
+
+    let stats = indexer.full_rebuild().await?;
+    assert_eq!(stats.inserted, 1);
+    assert_eq!(stats.claims_extracted, 0);
+    assert_eq!(stats.error_rate_limited, 1);
+    assert_eq!(stats.error_parse, 0);
+    assert_eq!(stats.error_invalid, 0);
+    assert_eq!(stats.total_extraction_errors(), 1);
+    assert_eq!(stats.errors, 1);
 
     Ok(())
 }

@@ -44,6 +44,17 @@ pub struct RebuildStats {
     pub inserted: usize,
     pub skipped: usize,
     pub errors: usize,
+    pub claims_extracted: usize,
+    pub empty_extractions: usize,
+    pub error_rate_limited: usize,
+    pub error_parse: usize,
+    pub error_invalid: usize,
+}
+
+impl RebuildStats {
+    pub fn total_extraction_errors(&self) -> usize {
+        self.error_rate_limited + self.error_parse + self.error_invalid
+    }
 }
 
 #[derive(Clone)]

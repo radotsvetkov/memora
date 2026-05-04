@@ -9,7 +9,9 @@ pub mod store;
 pub mod types;
 
 pub use contradict::ContradictionDetector;
-pub use extractor::ClaimExtractor;
+pub use extractor::{
+    ClaimExtractionDisposition, ClaimExtractionError, ClaimExtractionResult, ClaimExtractor,
+};
 pub use provenance::Provenance;
 pub use stale::StalenessTracker;
 pub use store::ClaimStore;
