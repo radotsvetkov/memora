@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use memora_core::{Embedder, Index, OllamaEmbedder, Vault, VectorIndex};
 use memora_llm::OllamaClient;
@@ -58,18 +58,109 @@ impl Embedder for DeterministicEmbedder {
     }
 }
 
+fn log_ollama_embed_config_warnings(embed: &EmbedConfig, llm: &LlmConfig) {
+    if embed.provider != "ollama" {
+        return;
+    }
+    let embed_set = embed
+        .embedding_model
+        .as_ref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    if !embed_set {
+        tracing::warn!(
+            "no [embed].embedding_model set in config; Ollama will fall back to [llm].embedding_model \
+             and then the chat model (wrong dimensions for most setups). \
+             Add embedding_model = \"nomic-embed-text\" under [embed]."
+        );
+        if llm.embedding_model.is_some() {
+            tracing::warn!(
+                "using legacy [llm].embedding_model until [embed].embedding_model is set explicitly."
+            );
+        }
+    }
+}
+
+/// Resolution order: `[embed].embedding_model`, then legacy `[llm].embedding_model`.
+pub(crate) fn resolve_ollama_embedding_model(cfg: &EmbedConfig, llm: &LlmConfig) -> Result<String> {
+    cfg.embedding_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| {
+            llm.embedding_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        })
+        .ok_or_else(|| {
+            anyhow!(
+                "no embedding model configured. Set [embed].embedding_model in \
+                 ~/.config/memora/config.toml (e.g. \"nomic-embed-text\") or [llm].embedding_model \
+                 for legacy setups."
+            )
+        })
+}
+
 pub fn build_embedder(cfg: &EmbedConfig, llm: &LlmConfig) -> Result<Arc<dyn Embedder>> {
     match cfg.provider.as_str() {
         "ollama" => {
-            let client = OllamaClient::new(
-                llm.model.clone(),
-                llm.endpoint.clone(),
-                llm.embedding_model.clone(),
-            )
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
-            .context("configure Ollama embedding client")?;
+            log_ollama_embed_config_warnings(cfg, llm);
+            let embedding_model = resolve_ollama_embedding_model(cfg, llm)?;
+            let endpoint = cfg.endpoint.clone().or_else(|| llm.endpoint.clone());
+            let client = OllamaClient::new(llm.model.clone(), endpoint, Some(embedding_model))
+                .map_err(|e| anyhow::anyhow!(e.to_string()))
+                .context("configure Ollama embedding client")?;
             Ok(Arc::new(OllamaEmbedder::new(Arc::new(client), cfg.dim)))
         }
         _ => Ok(Arc::new(DeterministicEmbedder::new(cfg.dim))),
+    }
+}
+
+#[cfg(test)]
+mod build_embedder_tests {
+    use super::*;
+
+    #[test]
+    fn resolve_prefers_embed_embedding_model_over_llm_chat_model() {
+        let embed = EmbedConfig {
+            provider: "ollama".into(),
+            model: "unused-for-ollama-embeddings".into(),
+            dim: 768,
+            embedding_model: Some("nomic-embed-text".into()),
+            endpoint: None,
+        };
+        let llm = LlmConfig {
+            provider: "ollama".into(),
+            model: Some("qwen2.5:14b-instruct-q5_K_M".into()),
+            embedding_model: None,
+            endpoint: None,
+        };
+        let m = resolve_ollama_embedding_model(&embed, &llm).expect("resolve");
+        assert_eq!(m, "nomic-embed-text");
+        assert_ne!(m, "qwen2.5:14b-instruct-q5_K_M");
+    }
+
+    #[test]
+    fn resolve_falls_back_to_llm_embedding_model_when_embed_unset() {
+        let embed = EmbedConfig {
+            provider: "ollama".into(),
+            model: "x".into(),
+            dim: 768,
+            embedding_model: None,
+            endpoint: None,
+        };
+        let llm = LlmConfig {
+            provider: "ollama".into(),
+            model: Some("qwen2.5:14b-instruct-q5_K_M".into()),
+            embedding_model: Some("nomic-embed-text".into()),
+            endpoint: None,
+        };
+        assert_eq!(
+            resolve_ollama_embedding_model(&embed, &llm).expect("resolve"),
+            "nomic-embed-text"
+        );
     }
 }

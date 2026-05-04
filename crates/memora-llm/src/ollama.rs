@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::client::{
     shared_http_client, CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError,
@@ -68,6 +68,10 @@ impl OllamaClient {
             model: model_name.clone(),
             prompt: prompt.to_string(),
         };
+        info!(
+            embed_model = %model_name,
+            "constructing embedding API request"
+        );
         debug!(model = %model_name, "sending ollama embeddings request");
         let response = self
             .http
@@ -350,6 +354,18 @@ mod tests {
             .complete(make_request(true))
             .await
             .expect("request should succeed");
+    }
+
+    #[test]
+    fn resolved_embedding_model_uses_explicit_option_not_chat_model() {
+        let client = OllamaClient::new(
+            Some("qwen2.5:14b-instruct-q5_K_M".into()),
+            None,
+            Some("nomic-embed-text".into()),
+        )
+        .expect("client");
+        assert_eq!(client.resolved_embedding_model(), "nomic-embed-text");
+        assert_ne!(client.resolved_embedding_model(), client.chat_model_name());
     }
 
     #[tokio::test]

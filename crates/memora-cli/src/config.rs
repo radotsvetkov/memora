@@ -110,6 +110,12 @@ pub struct EmbedConfig {
     pub provider: String,
     pub model: String,
     pub dim: usize,
+    /// Ollama model name for `/api/embeddings` (e.g. `nomic-embed-text`). Preferred over `[llm].embedding_model`.
+    #[serde(default)]
+    pub embedding_model: Option<String>,
+    /// Optional Ollama base URL for embeddings only; defaults to `[llm].endpoint` then `OLLAMA_HOST`.
+    #[serde(default)]
+    pub endpoint: Option<String>,
 }
 
 impl Default for EmbedConfig {
@@ -118,6 +124,8 @@ impl Default for EmbedConfig {
             provider: "deterministic".to_string(),
             model: "memora-cli/deterministic".to_string(),
             dim: 64,
+            embedding_model: None,
+            endpoint: None,
         }
     }
 }
@@ -266,6 +274,38 @@ mod tests {
         assert_eq!(
             cfg.indexing.parallelism,
             AppConfig::default().indexing.parallelism
+        );
+    }
+
+    #[test]
+    fn config_deserializes_embed_embedding_model_from_toml() {
+        let temp = tempdir().expect("create tempdir");
+        let vault = temp.path().join("vault");
+        fs::create_dir_all(vault.join(".memora")).expect("create .memora");
+        let path = vault.join(".memora/config.toml");
+        fs::write(
+            &path,
+            r#"[llm]
+provider = "ollama"
+model = "qwen2.5:14b-instruct-q5_K_M"
+
+[embed]
+provider = "ollama"
+model = "memora-cli/deterministic"
+dim = 768
+embedding_model = "nomic-embed-text"
+"#,
+        )
+        .expect("write config");
+
+        let cfg = AppConfig::load_from_paths(&path, None).expect("load");
+        assert_eq!(
+            cfg.embed.embedding_model.as_deref(),
+            Some("nomic-embed-text")
+        );
+        assert_eq!(
+            cfg.llm.model.as_deref(),
+            Some("qwen2.5:14b-instruct-q5_K_M")
         );
     }
 }

@@ -16,6 +16,11 @@ impl OllamaEmbedder {
     pub fn new(client: Arc<OllamaClient>, dim: usize) -> Self {
         Self { client, dim }
     }
+
+    /// Ollama model name used for `/api/embeddings` (for diagnostics and tests).
+    pub fn embedding_model_name(&self) -> String {
+        self.client.resolved_embedding_model()
+    }
 }
 
 #[async_trait]
@@ -48,5 +53,32 @@ impl Embedder for OllamaEmbedder {
 
     fn model_id(&self) -> &str {
         "ollama/embeddings"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use memora_llm::OllamaClient;
+
+    use super::OllamaEmbedder;
+
+    #[test]
+    fn embedder_uses_explicit_embedding_model_not_chat_model() {
+        let client = Arc::new(
+            OllamaClient::new(
+                Some("qwen2.5:14b-instruct-q5_K_M".into()),
+                None,
+                Some("nomic-embed-text".into()),
+            )
+            .expect("client"),
+        );
+        let embedder = OllamaEmbedder::new(client, 768);
+        assert_eq!(embedder.embedding_model_name(), "nomic-embed-text");
+        assert_ne!(
+            embedder.embedding_model_name(),
+            "qwen2.5:14b-instruct-q5_K_M"
+        );
     }
 }
