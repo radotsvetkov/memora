@@ -1,6 +1,7 @@
 use memora_llm::{LlmDestination, LlmProvider};
 
 use crate::claims::Claim;
+use crate::config::PrivacyConfig;
 use crate::note::Privacy;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,15 +23,23 @@ pub struct RedactionStats {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrivacyFilter {
     pub destination: LlmDestination,
+    pub redact_secret_in_cloud: bool,
 }
 
 impl PrivacyFilter {
     pub fn new_for(provider: LlmProvider) -> Self {
+        Self::new_for_provider(provider, &PrivacyConfig::default())
+    }
+
+    pub fn new_for_provider(provider: LlmProvider, config: &PrivacyConfig) -> Self {
         let destination = match provider {
             LlmProvider::Anthropic | LlmProvider::OpenAi => LlmDestination::CloudKnown,
             LlmProvider::Ollama => LlmDestination::Local,
         };
-        Self { destination }
+        Self {
+            destination,
+            redact_secret_in_cloud: config.redact_secret_in_cloud,
+        }
     }
 
     pub fn filter(&self, claims: &[Claim]) -> (Vec<RedactedClaim>, RedactionStats) {
@@ -38,7 +47,10 @@ impl PrivacyFilter {
         let mut out = Vec::with_capacity(claims.len());
 
         for claim in claims {
-            if self.destination == LlmDestination::Local || claim.privacy != Privacy::Secret {
+            let should_redact = self.redact_secret_in_cloud
+                && self.destination != LlmDestination::Local
+                && claim.privacy == Privacy::Secret;
+            if !should_redact {
                 out.push(RedactedClaim {
                     id: claim.id.clone(),
                     subject: claim.subject.clone(),

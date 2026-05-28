@@ -7,6 +7,7 @@ use crate::cite::answer::{rewrite_with_only_verified, CitationStatus, CitedAnswe
 use crate::cite::parser::{extract_quote_before, parse_claim_markers};
 use crate::claims::{Claim, ClaimStore};
 use crate::index::Index;
+use crate::vault_path::resolve_note_path;
 
 #[derive(Debug, Clone)]
 pub struct CitationCheck {
@@ -122,7 +123,7 @@ impl<'a> CitationValidator<'a> {
         let Some(note) = self.index.get_note(&claim.note_id)? else {
             return Ok(None);
         };
-        let path = self.vault_root.join(&note.path);
+        let path = resolve_note_path(self.vault_root, &note.path)?;
         let body = tokio::task::spawn_blocking(move || crate::note::parse(&path))
             .await??
             .body;

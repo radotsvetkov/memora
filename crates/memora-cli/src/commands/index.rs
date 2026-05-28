@@ -8,7 +8,7 @@ use memora_core::note::ParseError;
 use memora_llm::{make_client, LlmProvider};
 
 use crate::config::AppConfig;
-use crate::runtime::{build_embedder, open_index, open_vault, open_vector};
+use crate::runtime::{build_embedder_from_app, open_index, open_vault, open_vector};
 
 #[derive(Debug, Args)]
 pub struct IndexArgs {
@@ -33,7 +33,7 @@ pub async fn run(args: IndexArgs) -> Result<()> {
     let vault = open_vault(&args.vault);
     let index = open_index(&args.vault)?;
     let vector = open_vector(&args.vault, &cfg.embed)?;
-    let embedder = build_embedder(&cfg.embed, &cfg.llm)?;
+    let embedder = build_embedder_from_app(&cfg.embed, &cfg.llm)?;
     let provider = match cfg.llm.provider.as_str() {
         "anthropic" => LlmProvider::Anthropic,
         "openai" => LlmProvider::OpenAi,
@@ -45,10 +45,8 @@ pub async fn run(args: IndexArgs) -> Result<()> {
         cfg.llm.endpoint.clone(),
         cfg.llm.embedding_model.clone(),
     )?;
-    let claim_extractor = ClaimExtractor {
-        llm: Arc::clone(&llm),
-        model_label: llm.model_name().to_string(),
-    };
+    let claim_extractor = ClaimExtractor::new(Arc::clone(&llm), llm.model_name())
+        .with_redact_secret_in_cloud(cfg.privacy.redact_secret_in_cloud);
     let refs_sync_mode = cfg.frontmatter.refs_sync_mode()?;
     let indexer = Indexer::new(&vault, &index, embedder, Arc::new(Mutex::new(vector)))
         .with_frontmatter_fix_mode(fix_mode)

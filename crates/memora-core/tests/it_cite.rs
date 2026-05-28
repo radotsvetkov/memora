@@ -308,7 +308,7 @@ async fn answering_pipeline_retries_and_keeps_only_verified_markers() -> Result<
         retriever: &retriever,
         claim_store: &store,
         validator: &validator,
-        llm: &llm,
+        llm: Some(&llm),
         privacy_filter: PrivacyFilter::new_for(LlmProvider::Ollama),
         privacy_config: PrivacyConfig::default(),
     };

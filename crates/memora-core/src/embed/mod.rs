@@ -1,11 +1,15 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
+pub mod build;
+pub mod deterministic;
 #[cfg(feature = "local-embed")]
 pub mod local;
 pub mod ollama;
 pub mod openai;
 
+pub use build::build_embedder;
+pub use deterministic::DeterministicEmbedder;
 pub use ollama::OllamaEmbedder;
 pub use openai::OpenAiEmbedder;
 

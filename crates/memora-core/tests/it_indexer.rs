@@ -682,10 +682,8 @@ async fn full_rebuild_counts_rate_limited_extractions_as_errors() -> Result<()> 
         &temp.path().join("index").join("vectors"),
         embedder.dim(),
     )?));
-    let claim_extractor = ClaimExtractor {
-        llm: Arc::new(RateLimitedExtractorLlm),
-        model_label: "test/rate-limited".to_string(),
-    };
+    let claim_extractor =
+        ClaimExtractor::new(Arc::new(RateLimitedExtractorLlm), "test/rate-limited");
     let indexer = Indexer::new(&vault, &index, embedder, vector_index).with_claims(claim_extractor);
 
     let stats = indexer.full_rebuild().await?;

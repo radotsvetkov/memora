@@ -26,7 +26,7 @@ const ANSWER_SYSTEM_PROMPT: &str = "You answer using ONLY the verified claims. E
 ///         retriever,
 ///         claim_store,
 ///         validator,
-///         llm,
+///         llm: Some(llm),
 ///     };
 /// }
 /// ```
@@ -34,7 +34,7 @@ pub struct AnsweringPipeline<'a> {
     pub retriever: &'a HybridRetriever<'a>,
     pub claim_store: &'a ClaimStore<'a>,
     pub validator: &'a CitationValidator<'a>,
-    pub llm: &'a dyn LlmClient,
+    pub llm: Option<&'a dyn LlmClient>,
     pub privacy_filter: PrivacyFilter,
     pub privacy_config: PrivacyConfig,
 }
@@ -42,38 +42,10 @@ pub struct AnsweringPipeline<'a> {
 impl<'a> AnsweringPipeline<'a> {
     pub async fn answer(&self, query: &str, k: usize) -> Result<CitedAnswer> {
         let hits = self.retriever.search(query, k).await?;
-        let top_hits = hits.into_iter().take(8).collect::<Vec<_>>();
-
-        let mut candidate_claims = Vec::new();
-        for hit in &top_hits {
-            candidate_claims.extend(self.claim_store.list_for_note(&hit.id)?);
-        }
-
-        let candidate_ids = candidate_claims
-            .iter()
-            .map(|claim| claim.id.clone())
-            .collect::<Vec<_>>();
-        let current_claims = self.claim_store.current_only(&candidate_ids)?;
-        let note_score = top_hits
-            .iter()
-            .map(|hit| (hit.id.clone(), hit.score))
-            .collect::<HashMap<_, _>>();
-        let ranked_claims = rank_claims_by_note_score(current_claims, &note_score, 12);
+        let (redacted, stats, ranked_claims) = self.prepare_claims(query, k, &hits).await?;
         if ranked_claims.is_empty() {
-            return Ok(CitedAnswer {
-                raw_text: "No indexed claims matched this question yet. Try running `memora index --vault <path>` and ensure your notes include valid frontmatter."
-                    .to_string(),
-                clean_text: "No indexed claims matched this question yet. Try running `memora index --vault <path>` and ensure your notes include valid frontmatter."
-                    .to_string(),
-                checks: Vec::new(),
-                verified_count: 0,
-                unverified_count: 0,
-                mismatch_count: 0,
-                redacted_count: 0,
-                degraded: true,
-            });
+            return Ok(empty_claims_answer());
         }
-        let (redacted, stats) = self.privacy_filter.filter(&ranked_claims);
         if self.privacy_config.warn_on_secret_query && stats.redacted > 0 {
             tracing::warn!(
                 redacted = stats.redacted,
@@ -82,8 +54,10 @@ impl<'a> AnsweringPipeline<'a> {
         }
 
         let prompt_context = format_claim_context(&redacted);
-        let response = self
+        let llm = self
             .llm
+            .ok_or_else(|| anyhow::anyhow!("LLM client required for cited answer generation"))?;
+        let response = llm
             .complete(CompletionRequest {
                 model: None,
                 system: Some(ANSWER_SYSTEM_PROMPT.to_string()),
@@ -108,40 +82,120 @@ impl<'a> AnsweringPipeline<'a> {
             .filter(|check| check.status == CitationStatus::Verified)
             .map(|check| check.claim_id.clone())
             .collect::<HashSet<_>>();
-        let mut allowed_ids = verified_set.into_iter().collect::<Vec<_>>();
-        allowed_ids.sort();
 
-        let retry_system = format!(
-            "{ANSWER_SYSTEM_PROMPT} Use ONLY these claim ids: {}. Do not emit any other [claim:...] marker.",
-            allowed_ids.join(", ")
-        );
-        let retry = self
-            .llm
-            .complete(CompletionRequest {
-                model: None,
-                system: Some(retry_system),
-                messages: vec![Message {
-                    role: Role::User,
-                    content: format!("{prompt_context}\n\nQuestion: {query}"),
-                }],
-                max_tokens: 1_200,
-                temperature: 0.0,
-                json_mode: false,
-            })
-            .await?;
-        let mut cited_retry = self.validator.validate(&retry.text).await?;
-        cited_retry.redacted_count = stats.redacted;
-        if cited_retry.verified_count == 0 {
-            let fallback = build_extractive_answer(&redacted, 5);
-            let mut fallback_cited = self.validator.validate(&fallback).await?;
-            fallback_cited.redacted_count = stats.redacted;
-            fallback_cited.degraded = true;
-            return Ok(fallback_cited);
+        if !verified_set.is_empty() {
+            let mut allowed_ids = verified_set.into_iter().collect::<Vec<_>>();
+            allowed_ids.sort();
+            let retry_system = format!(
+                "{ANSWER_SYSTEM_PROMPT} Use ONLY these claim ids: {}. Do not emit any other [claim:...] marker.",
+                allowed_ids.join(", ")
+            );
+            let retry = llm
+                .complete(CompletionRequest {
+                    model: None,
+                    system: Some(retry_system),
+                    messages: vec![Message {
+                        role: Role::User,
+                        content: format!("{prompt_context}\n\nQuestion: {query}"),
+                    }],
+                    max_tokens: 1_200,
+                    temperature: 0.0,
+                    json_mode: false,
+                })
+                .await?;
+            let mut cited_retry = self.validator.validate(&retry.text).await?;
+            cited_retry.redacted_count = stats.redacted;
+            if cited_retry.verified_count > 0 {
+                if cited_retry.unverified_count + cited_retry.mismatch_count > 0 {
+                    cited_retry.degraded = true;
+                }
+                return Ok(cited_retry);
+            }
+            if cited.verified_count > 0 {
+                cited.degraded = true;
+                return Ok(cited);
+            }
         }
-        if cited_retry.unverified_count + cited_retry.mismatch_count > 0 {
-            cited_retry.degraded = true;
+
+        self.answer_extractive(&redacted, stats.redacted).await
+    }
+
+    /// Build a cited answer from indexed claims without calling an LLM.
+    pub async fn answer_extractive(
+        &self,
+        redacted: &[RedactedClaim],
+        redacted_count: usize,
+    ) -> Result<CitedAnswer> {
+        if redacted.is_empty() {
+            return Ok(empty_claims_answer());
         }
-        Ok(cited_retry)
+        let fallback = build_extractive_answer(redacted, 5);
+        let mut fallback_cited = self.validator.validate(&fallback).await?;
+        fallback_cited.redacted_count = redacted_count;
+        fallback_cited.degraded = true;
+        Ok(fallback_cited)
+    }
+
+    pub async fn answer_from_hits(&self, query: &str, k: usize) -> Result<CitedAnswer> {
+        let hits = self.retriever.search(query, k).await?;
+        let (redacted, stats, ranked_claims) = self.prepare_claims(query, k, &hits).await?;
+        if ranked_claims.is_empty() {
+            return Ok(empty_claims_answer());
+        }
+        self.answer_extractive(&redacted, stats.redacted).await
+    }
+
+    async fn prepare_claims(
+        &self,
+        _query: &str,
+        _k: usize,
+        hits: &[crate::retrieve::RetrievalHit],
+    ) -> Result<(
+        Vec<RedactedClaim>,
+        crate::privacy::RedactionStats,
+        Vec<Claim>,
+    )> {
+        let top_hits = hits.iter().take(8).collect::<Vec<_>>();
+
+        let mut candidate_claims = Vec::new();
+        for hit in &top_hits {
+            candidate_claims.extend(self.claim_store.list_for_note(&hit.id)?);
+        }
+
+        let candidate_ids = candidate_claims
+            .iter()
+            .map(|claim| claim.id.clone())
+            .collect::<Vec<_>>();
+        let current_claims = self.claim_store.current_only(&candidate_ids)?;
+        let note_score = top_hits
+            .iter()
+            .map(|hit| (hit.id.clone(), hit.score))
+            .collect::<HashMap<_, _>>();
+        let ranked_claims = rank_claims_by_note_score(current_claims, &note_score, 12);
+        if ranked_claims.is_empty() {
+            return Ok((
+                Vec::new(),
+                crate::privacy::RedactionStats::default(),
+                Vec::new(),
+            ));
+        }
+        let (redacted, stats) = self.privacy_filter.filter(&ranked_claims);
+        Ok((redacted, stats, ranked_claims))
+    }
+}
+
+fn empty_claims_answer() -> CitedAnswer {
+    CitedAnswer {
+        raw_text: "No indexed claims matched this question yet. Try running `memora index --vault <path>` and ensure your notes include valid frontmatter."
+            .to_string(),
+        clean_text: "No indexed claims matched this question yet. Try running `memora index --vault <path>` and ensure your notes include valid frontmatter."
+            .to_string(),
+        checks: Vec::new(),
+        verified_count: 0,
+        unverified_count: 0,
+        mismatch_count: 0,
+        redacted_count: 0,
+        degraded: true,
     }
 }
 

@@ -177,10 +177,7 @@ fn build_indexer<'a>(
 ) -> Result<Indexer<'a>> {
     let embedder: Arc<dyn Embedder> = Arc::new(OneDimEmbedder);
     let vector_index = Arc::new(Mutex::new(VectorIndex::open_or_create(vectors_root, 1)?));
-    let claim_extractor = ClaimExtractor {
-        llm,
-        model_label: "test/mock-claims".to_string(),
-    };
+    let claim_extractor = ClaimExtractor::new(llm, "test/mock-claims");
     Ok(Indexer::new(vault, index, embedder, vector_index).with_claims(claim_extractor))
 }
 

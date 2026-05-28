@@ -210,6 +210,22 @@ pub struct PrivacyConfig {
     pub warn_on_secret_query: bool,
 }
 
+impl PrivacyConfig {
+    pub fn to_core(&self) -> memora_core::PrivacyConfig {
+        use memora_core::note::Privacy;
+        let default_note_privacy = match self.default_note_privacy.as_str() {
+            "public" => Privacy::Public,
+            "secret" => Privacy::Secret,
+            _ => Privacy::Private,
+        };
+        memora_core::PrivacyConfig {
+            default_note_privacy,
+            redact_secret_in_cloud: self.redact_secret_in_cloud,
+            warn_on_secret_query: self.warn_on_secret_query,
+        }
+    }
+}
+
 impl Default for PrivacyConfig {
     fn default() -> Self {
         Self {

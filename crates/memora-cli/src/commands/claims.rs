@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 use memora_core::claims::{ClaimExtractor, ClaimStore};
 use memora_core::note;
+use memora_core::resolve_note_path;
 use memora_llm::{make_client, LlmProvider};
 
 use crate::config::AppConfig;
@@ -59,16 +60,10 @@ async fn run_extract(args: ClaimsExtractArgs) -> Result<()> {
     let row = index
         .get_note(&args.note)?
         .ok_or_else(|| anyhow::anyhow!("note not found: {}", args.note))?;
-    let path = if std::path::PathBuf::from(&row.path).is_absolute() {
-        std::path::PathBuf::from(&row.path)
-    } else {
-        args.vault.join(&row.path)
-    };
+    let path = resolve_note_path(&args.vault, &row.path)?;
     let parsed = note::parse(&path)?;
-    let extractor = ClaimExtractor {
-        llm: Arc::clone(&llm),
-        model_label: llm.model_name().to_string(),
-    };
+    let extractor = ClaimExtractor::new(Arc::clone(&llm), llm.model_name())
+        .with_redact_secret_in_cloud(cfg.privacy.redact_secret_in_cloud);
     let claims = extractor.extract(&parsed, &parsed.body).await?;
     for claim in &claims {
         store.upsert(claim)?;
@@ -86,11 +81,7 @@ fn run_show(args: ClaimsShowArgs) -> Result<()> {
     let row = index
         .get_note(&claim.note_id)?
         .ok_or_else(|| anyhow::anyhow!("note missing for claim: {}", claim.note_id))?;
-    let note_path = if std::path::PathBuf::from(&row.path).is_absolute() {
-        std::path::PathBuf::from(&row.path)
-    } else {
-        args.vault.join(&row.path)
-    };
+    let note_path = resolve_note_path(&args.vault, &row.path)?;
     let body = note::parse(&note_path)?.body;
     let quote = body
         .get(claim.span_start..claim.span_end)

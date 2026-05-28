@@ -15,6 +15,8 @@ pub mod privacy;
 pub mod retrieve;
 pub mod scheduler;
 pub mod vault;
+pub mod vault_config;
+pub mod vault_path;
 
 pub use answer::AnsweringPipeline;
 pub use challenger::{
@@ -28,7 +30,9 @@ pub use claims::{
 };
 pub use config::PrivacyConfig;
 pub use consolidate::{AtlasWriter, WorldMapWriter};
-pub use embed::{normalize_text, Embedder, OllamaEmbedder, OpenAiEmbedder};
+pub use embed::{
+    build_embedder, normalize_text, DeterministicEmbedder, Embedder, OllamaEmbedder, OpenAiEmbedder,
+};
 pub use index::{Index, IndexError, NoteRow, RebuildStats, VectorIndex};
 pub use learn::QValueLearner;
 pub use note::{Frontmatter, Note, NoteSource, ParseError, Privacy};
@@ -38,3 +42,5 @@ pub use scheduler::{
     ChallengerScheduleConfig, ConsolidationScheduleConfig, Scheduler, SchedulerConfig,
 };
 pub use vault::{scan, Vault, VaultError, VaultEvent};
+pub use vault_config::VaultConfig;
+pub use vault_path::{join_vault_relative, resolve_note_path, validate_region, VaultPathError};

@@ -8,13 +8,14 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Args;
+use memora_core::claims::ClaimExtractor;
 use memora_core::indexer::FrontmatterFixMode;
 use memora_core::vault::watch as watch_vault;
 use memora_core::{Scheduler, SchedulerConfig, VaultEvent};
 use memora_llm::{make_client, LlmProvider};
 
 use crate::config::AppConfig;
-use crate::runtime::{build_embedder, open_index, open_vault, open_vector};
+use crate::runtime::{build_embedder_from_app, open_index, open_vault, open_vector};
 
 #[derive(Debug, Args)]
 pub struct WatchArgs {
@@ -32,19 +33,9 @@ pub async fn run(args: WatchArgs) -> Result<()> {
     let vault = open_vault(&args.vault);
     let index = Arc::new(open_index(&args.vault)?);
     let vector = open_vector(&args.vault, &cfg.embed)?;
-    let embedder = build_embedder(&cfg.embed, &cfg.llm)?;
+    let embedder = build_embedder_from_app(&cfg.embed, &cfg.llm)?;
     let refs_sync_mode = cfg.frontmatter.refs_sync_mode()?;
     let debounce = Duration::from_millis(cfg.watch.debounce_ms);
-    let indexer = memora_core::indexer::Indexer::new(
-        &vault,
-        index.as_ref(),
-        embedder,
-        Arc::new(Mutex::new(vector)),
-    )
-    .with_frontmatter_fix_mode(resolve_watch_fix_mode(&args))
-    .with_refs_sync_mode(refs_sync_mode);
-    indexer.full_rebuild().await?;
-
     let provider = match cfg.llm.provider.as_str() {
         "anthropic" => LlmProvider::Anthropic,
         "openai" => LlmProvider::OpenAi,
@@ -56,6 +47,19 @@ pub async fn run(args: WatchArgs) -> Result<()> {
         cfg.llm.endpoint.clone(),
         cfg.llm.embedding_model.clone(),
     )?;
+    let claim_extractor = ClaimExtractor::new(Arc::clone(&llm), llm.model_name())
+        .with_redact_secret_in_cloud(cfg.privacy.redact_secret_in_cloud);
+    let indexer = memora_core::indexer::Indexer::new(
+        &vault,
+        index.as_ref(),
+        embedder,
+        Arc::new(Mutex::new(vector)),
+    )
+    .with_frontmatter_fix_mode(resolve_watch_fix_mode(&args))
+    .with_refs_sync_mode(refs_sync_mode)
+    .with_claims(claim_extractor);
+    indexer.full_rebuild().await?;
+
     let scheduler = Scheduler::spawn(
         SchedulerConfig::default(),
         index.clone(),

@@ -15,6 +15,7 @@ use crate::index::{Index, RebuildStats, VectorIndex};
 use crate::note;
 use crate::note::{FrontmatterAction, NoteSource};
 use crate::vault::{scan, Vault, VaultEvent};
+use crate::vault_path::resolve_note_path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FrontmatterFixMode {
@@ -431,19 +432,13 @@ async fn upsert_note_inner(
                     match &e {
                         ClaimExtractionError::RateLimited => upsert_stats.error_rate_limited += 1,
                         ClaimExtractionError::Parse(_) => upsert_stats.error_parse += 1,
-                        // Non-rate-limited extraction failures are still surfaced as parse bucket
-                        // for now so they are not silently dropped in launch metrics.
                         ClaimExtractionError::Llm(_) => upsert_stats.error_parse += 1,
                     }
                     tracing::warn!(
                         path = %parsed.path.display(),
                         error = %e,
-                        "claim extraction failed; note indexed without claims"
+                        "claim extraction failed; keeping existing claims for note"
                     );
-                    index.with_transaction(|tx| {
-                        claim_store.delete_for_note_in_tx(tx, &parsed.fm.id)?;
-                        Ok(())
-                    })?;
                     let provenance = Provenance::new(index);
                     let stale_tracker = StalenessTracker::new(index, &provenance);
                     stale_tracker.mark_source_edited_claims(&old_claim_ids)?;
@@ -614,10 +609,12 @@ fn next_available_note_id_shared(index: &Index, base_id: &str) -> Result<String>
 }
 
 fn resolve_indexed_path(vault_root: &Path, indexed_path: &str) -> PathBuf {
-    let raw = PathBuf::from(indexed_path);
-    if raw.is_absolute() || raw.exists() {
-        raw
-    } else {
-        vault_root.join(raw)
-    }
+    resolve_note_path(vault_root, indexed_path).unwrap_or_else(|err| {
+        tracing::warn!(
+            indexed_path,
+            error = %err,
+            "invalid indexed path; falling back to vault join"
+        );
+        vault_root.join(indexed_path)
+    })
 }

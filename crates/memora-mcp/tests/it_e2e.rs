@@ -89,11 +89,7 @@ async fn mcp_runtime_e2e_tools() -> Result<()> {
     let _seed_id = seed_note(&vault, &index)?;
     fs::write(vault.join("world_map.md"), "# World Map\n")?;
 
-    let runtime = MemoraRuntime {
-        vault_root: vault.clone(),
-        index_db,
-        vector_index: vector,
-    };
+    let runtime = MemoraRuntime::with_storage(vault.clone(), index_db, vector);
 
     let cited = runtime
         .invoke_tool(
@@ -125,22 +121,25 @@ async fn mcp_runtime_e2e_tools() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("missing capture path"))?;
     assert!(vault.join(captured_path).exists());
 
-    runtime
-        .invoke_tool(
-            "memora_consolidate",
-            serde_json::json!({"scope":"region:sample"}),
-        )
-        .await?;
-    let atlas = vault.join("sample").join("_atlas.md");
-    assert!(atlas.exists());
+    if std::env::var("MEMORA_ENABLE_NETWORK_LLM").ok().as_deref() == Some("1") {
+        runtime
+            .invoke_tool(
+                "memora_consolidate",
+                serde_json::json!({"scope":"region:sample"}),
+            )
+            .await?;
+        let atlas = vault.join("sample").join("_atlas.md");
+        assert!(atlas.exists());
 
-    let challenge = runtime
-        .invoke_tool("memora_challenge", serde_json::json!({}))
-        .await?;
-    assert!(challenge.get("stale_alerts").is_some());
-    assert!(challenge.get("contradiction_alerts").is_some());
-    assert!(challenge.get("cross_region_alerts").is_some());
-    assert!(challenge.get("frontier_alerts").is_some());
+        let challenge = runtime
+            .invoke_tool("memora_challenge", serde_json::json!({}))
+            .await?;
+        assert!(challenge.get("stale_alerts").is_some());
+        assert!(challenge.get("contradiction_alerts").is_some());
+        assert!(challenge.get("cross_region_alerts").is_some());
+        assert!(challenge.get("frontier_alerts").is_some());
+    }
+
     Ok(())
 }
 
@@ -205,11 +204,7 @@ relocation-token appears in this note body.
         "work"
     );
 
-    let runtime = MemoraRuntime {
-        vault_root: vault_root.clone(),
-        index_db,
-        vector_index: vector_index_path,
-    };
+    let runtime = MemoraRuntime::with_storage(vault_root.clone(), index_db, vector_index_path);
     let query = runtime
         .invoke_tool(
             "memora_query",
@@ -233,4 +228,80 @@ relocation-token appears in this note body.
     );
 
     Ok(())
+}
+
+#[tokio::test]
+async fn capture_rejects_path_traversal_region() {
+    let temp = tempdir().expect("tempdir");
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(&vault).expect("mkdir");
+    let runtime = MemoraRuntime::with_storage(
+        vault.clone(),
+        vault.join(".memora/memora.db"),
+        vault.join(".memora/vectors"),
+    );
+    let err = runtime
+        .invoke_tool(
+            "memora_capture",
+            serde_json::json!({
+                "region":"../outside",
+                "summary":"bad",
+                "body":"bad",
+                "tags":[]
+            }),
+        )
+        .await
+        .expect_err("capture should reject traversal");
+    assert!(
+        err.to_string().contains("invalid path") || err.to_string().contains("InvalidComponent")
+    );
+}
+
+#[tokio::test]
+async fn get_note_redacts_secret_body() {
+    let temp = tempdir().expect("tempdir");
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(&vault).expect("mkdir");
+    let index_db = vault.join(".memora/memora.db");
+    fs::create_dir_all(vault.join(".memora")).expect("mkdir");
+    let index = Index::open(&index_db).expect("open index");
+    let now = Utc
+        .with_ymd_and_hms(2026, 4, 1, 0, 0, 0)
+        .single()
+        .expect("datetime");
+    let rel = PathBuf::from("secret.md");
+    let note = Note {
+        path: rel.clone(),
+        fm: Frontmatter {
+            id: "secret-note".to_string(),
+            region: "default".to_string(),
+            source: NoteSource::Personal,
+            privacy: Privacy::Secret,
+            created: now,
+            updated: now,
+            summary: "Secret".to_string(),
+            tags: vec![],
+            refs: vec![],
+        },
+        body: "top-secret-content".to_string(),
+        wikilinks: vec![],
+    };
+    fs::write(vault.join(&rel), memora_core::note::render(&note)).expect("write");
+    index.upsert_note(&note, &note.body).expect("upsert");
+
+    let runtime =
+        MemoraRuntime::with_storage(vault.clone(), index_db, vault.join(".memora/vectors"));
+    let got = runtime
+        .invoke_tool("memora_get_note", serde_json::json!({"id":"secret-note"}))
+        .await
+        .expect("get note");
+    assert_eq!(
+        got.get("body").and_then(serde_json::Value::as_str),
+        Some("[redacted]")
+    );
+    assert_eq!(
+        got.get("body_redacted")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
 }

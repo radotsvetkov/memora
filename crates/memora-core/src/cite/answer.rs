@@ -65,12 +65,17 @@ fn split_sentence_bounds(text: &str) -> Vec<(usize, usize)> {
     let mut idx = 0usize;
     while idx < text.len() {
         let rem = &text[idx..];
-        let boundary_len = if rem.starts_with(". ")
+        let boundary_len = if rem.starts_with("\n\n")
+            || rem.starts_with(". ")
             || rem.starts_with("! ")
             || rem.starts_with("? ")
-            || rem.starts_with("\n\n")
+            || rem.starts_with(".\n")
+            || rem.starts_with("!\n")
+            || rem.starts_with("?\n")
         {
             Some(2)
+        } else if rem.starts_with('.') && rem.len() == 1 {
+            Some(1)
         } else {
             None
         };

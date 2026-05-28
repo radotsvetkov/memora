@@ -61,10 +61,10 @@ fn make_note(id: &str, body: &str) -> Note {
 }
 
 fn make_claim_extractor(canned_response: String) -> ClaimExtractor {
-    ClaimExtractor {
-        llm: Arc::new(MockExtractorLlm { canned_response }),
-        model_label: "test/privacy".to_string(),
-    }
+    ClaimExtractor::new(
+        Arc::new(MockExtractorLlm { canned_response }),
+        "test/privacy",
+    )
 }
 
 #[tokio::test]

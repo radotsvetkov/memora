@@ -3,11 +3,11 @@ use clap::Args;
 use memora_core::answer::AnsweringPipeline;
 use memora_core::cite::CitationValidator;
 use memora_core::claims::ClaimStore;
-use memora_core::{HybridRetriever, PrivacyConfig, PrivacyFilter};
+use memora_core::{HybridRetriever, PrivacyFilter};
 use memora_llm::{make_client, LlmProvider};
 
 use crate::config::AppConfig;
-use crate::runtime::{build_embedder, open_index, open_vector};
+use crate::runtime::{build_embedder_from_app, open_index, open_vector, privacy_config_from_app};
 
 #[derive(Debug, Args)]
 pub struct QueryArgs {
@@ -23,7 +23,7 @@ pub async fn run(args: QueryArgs) -> Result<()> {
     let cfg = AppConfig::load(&args.vault)?;
     let index = open_index(&args.vault)?;
     let vector_index = open_vector(&args.vault, &cfg.embed)?;
-    let embedder = build_embedder(&cfg.embed, &cfg.llm)?;
+    let embedder = build_embedder_from_app(&cfg.embed, &cfg.llm)?;
     let store = ClaimStore::new(&index);
     let validator = CitationValidator {
         store: &store,
@@ -56,13 +56,15 @@ pub async fn run(args: QueryArgs) -> Result<()> {
         cfg.llm.endpoint.clone(),
         cfg.llm.embedding_model.clone(),
     )?;
+    let privacy_config = privacy_config_from_app(&cfg);
+    let provider = provider_from_string(&cfg.llm.provider);
     let pipeline = AnsweringPipeline {
         retriever: &retriever,
         claim_store: &store,
         validator: &validator,
-        llm: llm.as_ref(),
-        privacy_filter: PrivacyFilter::new_for(provider_from_string(&cfg.llm.provider)),
-        privacy_config: PrivacyConfig::default(),
+        llm: Some(llm.as_ref()),
+        privacy_filter: PrivacyFilter::new_for_provider(provider, &privacy_config),
+        privacy_config,
     };
     let answer = pipeline.answer(&args.text, k).await?;
     println!("{}", answer.clean_text);

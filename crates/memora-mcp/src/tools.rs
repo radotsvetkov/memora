@@ -4,22 +4,20 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Context, Result};
-use async_trait::async_trait;
 use chrono::Utc;
 use memora_core::answer::AnsweringPipeline;
 use memora_core::challenger::Challenger;
 use memora_core::cite::{CitationStatus, CitationValidator};
-use memora_core::claims::{ClaimStore, Provenance, StalenessTracker};
+use memora_core::claims::{ClaimExtractor, ClaimStore, Provenance, StalenessTracker};
 use memora_core::consolidate::{AtlasWriter, WorldMapWriter};
 use memora_core::indexer::Indexer;
 use memora_core::note::{self, Frontmatter, Note, NoteSource, Privacy};
+use memora_core::privacy::redact_body_for_display;
 use memora_core::{
-    Embedder, HybridRetriever, Index, PrivacyConfig, PrivacyFilter, Vault, VaultEvent, VectorIndex,
+    build_embedder, resolve_note_path, validate_region, Embedder, HybridRetriever, Index,
+    PrivacyFilter, Vault, VaultConfig, VaultEvent, VectorIndex,
 };
-use memora_llm::{
-    make_client, CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError,
-    LlmProvider,
-};
+use memora_llm::{make_client, LlmClient, LlmProvider};
 use rmcp::handler::server::tool::Parameters;
 use rmcp::model::{CallToolResult, Content, ServerCapabilities, ServerInfo};
 use rmcp::{model::ErrorData as McpError, schemars, tool, ServerHandler};
@@ -210,40 +208,66 @@ pub struct MemoraRuntime {
     pub vault_root: PathBuf,
     pub index_db: PathBuf,
     pub vector_index: PathBuf,
+    config: VaultConfig,
 }
 
 impl MemoraRuntime {
     pub fn default_paths() -> Self {
+        let vault_root = PathBuf::from("vault");
         Self {
-            vault_root: PathBuf::from("vault"),
+            vault_root: vault_root.clone(),
             index_db: PathBuf::from(".memora/memora.db"),
             vector_index: PathBuf::from(".memora/vectors"),
+            config: VaultConfig::load(&vault_root).unwrap_or_default(),
         }
     }
 
     pub fn from_env() -> Result<Self> {
+        let vault_root =
+            PathBuf::from(std::env::var("MEMORA_VAULT").context("MEMORA_VAULT not set")?);
         Ok(Self {
-            vault_root: PathBuf::from(
-                std::env::var("MEMORA_VAULT").context("MEMORA_VAULT not set")?,
-            ),
+            vault_root: vault_root.clone(),
             index_db: PathBuf::from(
                 std::env::var("MEMORA_INDEX_DB").context("MEMORA_INDEX_DB not set")?,
             ),
             vector_index: PathBuf::from(
                 std::env::var("MEMORA_VECTOR_INDEX").context("MEMORA_VECTOR_INDEX not set")?,
             ),
+            config: VaultConfig::load(&vault_root)?,
         })
     }
 
+    pub fn with_storage(vault_root: PathBuf, index_db: PathBuf, vector_index: PathBuf) -> Self {
+        let config = VaultConfig::load(&vault_root).unwrap_or_default();
+        Self {
+            vault_root,
+            index_db,
+            vector_index,
+            config,
+        }
+    }
+
+    fn embedder(&self) -> Result<Arc<dyn Embedder>> {
+        build_embedder(&self.config.embed, &self.config.llm)
+    }
+
+    fn privacy_config(&self) -> memora_core::PrivacyConfig {
+        self.config.privacy_config()
+    }
+
+    fn llm_provider(&self) -> LlmProvider {
+        self.config.llm_provider()
+    }
+
     pub async fn query(&self, input: QueryInput) -> Result<Value> {
-        let k = input.k.unwrap_or(5) as usize;
+        let k = input.k.unwrap_or(self.config.retrieval.top_k as u32) as usize;
         let index = Index::open(&self.index_db)?;
-        let embedder = DeterministicEmbedder::new(64);
+        let embedder = self.embedder()?;
         let vector = VectorIndex::open_or_create(&self.vector_index, embedder.dim())?;
         let retriever = HybridRetriever {
             index: &index,
             vec: &vector,
-            embedder: &embedder,
+            embedder: embedder.as_ref(),
         };
         let hits = retriever.search(&input.query, k).await?;
         let mut output_hits = Vec::new();
@@ -252,7 +276,7 @@ impl MemoraRuntime {
             let Some(row) = index.get_note(&hit.id)? else {
                 continue;
             };
-            let snippet = note_snippet(&self.vault_root, &row.path)?;
+            let snippet = note_snippet(&self.vault_root, &row.path, &row.privacy)?;
             regions.insert(row.region.clone());
             output_hits.push(json!({
                 "id": row.id,
@@ -269,37 +293,38 @@ impl MemoraRuntime {
     }
 
     pub async fn query_cited(&self, input: QueryInput) -> Result<Value> {
-        let k = input.k.unwrap_or(5) as usize;
+        let k = input.k.unwrap_or(self.config.retrieval.top_k as u32) as usize;
         let index = Index::open(&self.index_db)?;
-        let embedder = DeterministicEmbedder::new(64);
+        let embedder = self.embedder()?;
         let vector = VectorIndex::open_or_create(&self.vector_index, embedder.dim())?;
         let claim_store = ClaimStore::new(&index);
         let retriever = HybridRetriever {
             index: &index,
             vec: &vector,
-            embedder: &embedder,
+            embedder: embedder.as_ref(),
         };
         let validator = CitationValidator {
             store: &claim_store,
             index: &index,
             vault_root: &self.vault_root,
         };
-        let llm = build_llm(LlmProvider::Ollama, None)?;
+        let privacy_config = self.privacy_config();
+        let provider = self.llm_provider();
+        let privacy_filter = PrivacyFilter::new_for_provider(provider, &privacy_config);
+        let llm = build_llm(&self.config)?;
         let pipeline = AnsweringPipeline {
             retriever: &retriever,
             claim_store: &claim_store,
             validator: &validator,
-            llm: llm.as_ref(),
-            privacy_filter: PrivacyFilter::new_for(LlmProvider::Ollama),
-            privacy_config: PrivacyConfig::default(),
+            llm: llm.as_ref().map(|client| client.as_ref()),
+            privacy_filter,
+            privacy_config,
         };
-        let mut answer = pipeline.answer(&input.query, k).await?;
-        if answer.verified_count == 0 {
-            let claim_hits = claim_store.search_fts(&input.query, 1)?;
-            if let Some((claim_id, _)) = claim_hits.first() {
-                answer = validator.validate(&format!("[claim:{claim_id}]")).await?;
-            }
-        }
+        let answer = if llm.is_some() {
+            pipeline.answer(&input.query, k).await?
+        } else {
+            pipeline.answer_from_hits(&input.query, k).await?
+        };
         Ok(serialize_cited_answer(answer))
     }
 
@@ -308,13 +333,18 @@ impl MemoraRuntime {
         let row = index
             .get_note(&input.id)?
             .ok_or_else(|| anyhow!("note not found: {}", input.id))?;
-        let parsed = note::parse(&resolve_note_path(&self.vault_root, &row.path))?;
+        let note_path = resolve_note_path(&self.vault_root, &row.path)?;
+        let parsed = note::parse(&note_path)?;
+        let note_privacy = parse_privacy_str(&row.privacy)?;
+        let (body, body_redacted) = redact_body_for_display(&parsed.body, note_privacy);
         let hebbian = index.hebbian_neighbors(&row.id, 5)?;
         Ok(json!({
             "id": row.id,
             "region": row.region,
             "summary": row.summary,
-            "body": parsed.body,
+            "privacy": row.privacy,
+            "body": body,
+            "body_redacted": body_redacted,
             "tags": parsed.fm.tags,
             "refs": parsed.fm.refs,
             "wikilinks": parsed.wikilinks,
@@ -356,14 +386,18 @@ impl MemoraRuntime {
 
     pub async fn record_useful(&self, input: RecordUsefulInput) -> Result<Value> {
         let conn = rusqlite::Connection::open(&self.index_db)?;
-        conn.execute(
+        let changed = conn.execute(
             "UPDATE retrievals SET marked_useful_json = ? WHERE query_id = ?",
             params![serde_json::to_string(&input.useful_ids)?, input.query_id],
         )?;
+        if changed == 0 {
+            return Err(anyhow!("query_id not found: {}", input.query_id));
+        }
         Ok(json!({ "ok": true }))
     }
 
     pub async fn capture(&self, input: CaptureInput) -> Result<Value> {
+        validate_region(&self.vault_root, &input.region)?;
         let id = format!("note-{}", Uuid::new_v4().simple());
         let rel_path = PathBuf::from(&input.region).join(format!("{id}.md"));
         let abs_path = self.vault_root.join(&rel_path);
@@ -390,13 +424,18 @@ impl MemoraRuntime {
         fs::write(&abs_path, note::render(&note))?;
 
         let index = Index::open(&self.index_db)?;
-        let embedder = Arc::new(DeterministicEmbedder::new(64));
+        let embedder = self.embedder()?;
         let vector = Arc::new(Mutex::new(VectorIndex::open_or_create(
             &self.vector_index,
             embedder.dim(),
         )?));
         let vault = Vault::new(self.vault_root.clone());
-        let indexer = Indexer::new(&vault, &index, embedder, vector);
+        let mut indexer = Indexer::new(&vault, &index, embedder, vector);
+        if let Some(llm) = build_llm(&self.config)? {
+            let extractor = ClaimExtractor::new(Arc::clone(&llm), llm.model_name())
+                .with_redact_secret_in_cloud(self.privacy_config().redact_secret_in_cloud);
+            indexer = indexer.with_claims(extractor);
+        }
         indexer.handle_event(VaultEvent::Created(abs_path)).await?;
         Ok(json!({ "id": id, "path": rel_path.to_string_lossy().to_string() }))
     }
@@ -404,7 +443,7 @@ impl MemoraRuntime {
     pub async fn consolidate(&self, input: ConsolidateInput) -> Result<Value> {
         let index = Index::open(&self.index_db)?;
         let store = ClaimStore::new(&index);
-        let llm = build_llm(LlmProvider::Ollama, None)?;
+        let llm = require_llm(&self.config)?;
         let atlas = AtlasWriter {
             db: &index,
             claim_store: &store,
@@ -450,7 +489,7 @@ impl MemoraRuntime {
                 json!({ "exists": true, "span_intact": false, "current_text": Value::Null }),
             );
         };
-        let body = note::parse(&resolve_note_path(&self.vault_root, &note_row.path))?.body;
+        let body = note::parse(&resolve_note_path(&self.vault_root, &note_row.path)?)?.body;
         let current_text = body
             .get(claim.span_start..claim.span_end)
             .map(ToString::to_string);
@@ -514,7 +553,7 @@ impl MemoraRuntime {
     pub async fn challenge(&self) -> Result<Value> {
         let index = Index::open(&self.index_db)?;
         let store = ClaimStore::new(&index);
-        let llm = build_llm(LlmProvider::Ollama, None)?;
+        let llm = require_llm(&self.config)?;
         let challenger = Challenger {
             db: &index,
             claim_store: &store,
@@ -600,62 +639,53 @@ fn citation_status_to_str(status: CitationStatus) -> &'static str {
     }
 }
 
-fn note_snippet(vault_root: &Path, indexed_path: &str) -> Result<String> {
-    let parsed = note::parse(&resolve_note_path(vault_root, indexed_path))?;
-    Ok(parsed
-        .body
+fn note_snippet(vault_root: &Path, indexed_path: &str, privacy: &str) -> Result<String> {
+    let note_path = resolve_note_path(vault_root, indexed_path)?;
+    let parsed = note::parse(&note_path)?;
+    let note_privacy = parse_privacy_str(privacy)?;
+    let (body, _) = redact_body_for_display(&parsed.body, note_privacy);
+    Ok(body
         .split_whitespace()
         .take(30)
         .collect::<Vec<_>>()
         .join(" "))
 }
 
-fn resolve_note_path(vault_root: &Path, indexed_path: &str) -> PathBuf {
-    let raw = PathBuf::from(indexed_path);
-    if raw.is_absolute() || raw.exists() {
-        raw
-    } else {
-        vault_root.join(raw)
+fn parse_privacy_str(raw: &str) -> Result<Privacy> {
+    match raw {
+        "public" => Ok(Privacy::Public),
+        "private" => Ok(Privacy::Private),
+        "secret" => Ok(Privacy::Secret),
+        other => Err(anyhow!("invalid privacy value: {other}")),
     }
 }
 
-#[derive(Debug, Clone)]
-struct DeterministicEmbedder {
-    dim: usize,
+fn network_llm_enabled() -> bool {
+    std::env::var("MEMORA_ENABLE_NETWORK_LLM")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
-impl DeterministicEmbedder {
-    fn new(dim: usize) -> Self {
-        Self { dim }
+fn build_llm(config: &VaultConfig) -> Result<Option<Arc<dyn LlmClient>>> {
+    if !network_llm_enabled() {
+        return Ok(None);
     }
+    let client = make_client(
+        config.llm_provider(),
+        config.llm.model.clone(),
+        config.llm.endpoint.clone(),
+        config.llm.embedding_model.clone(),
+    )
+    .map_err(|err| anyhow!("failed to configure LLM client: {err}"))?;
+    Ok(Some(client))
 }
 
-#[async_trait]
-impl Embedder for DeterministicEmbedder {
-    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let mut out = Vec::with_capacity(texts.len());
-        for text in texts {
-            let mut bytes = blake3::hash(text.as_bytes()).as_bytes().to_vec();
-            while bytes.len() < self.dim * 4 {
-                bytes.extend_from_slice(blake3::hash(&bytes).as_bytes());
-            }
-            let mut vector = Vec::with_capacity(self.dim);
-            for chunk in bytes.chunks_exact(4).take(self.dim) {
-                let bits = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                vector.push((bits as f32 / u32::MAX as f32) * 2.0 - 1.0);
-            }
-            out.push(vector);
-        }
-        Ok(out)
-    }
-
-    fn dim(&self) -> usize {
-        self.dim
-    }
-
-    fn model_id(&self) -> &str {
-        "memora-mcp/deterministic"
-    }
+fn require_llm(config: &VaultConfig) -> Result<Arc<dyn LlmClient>> {
+    build_llm(config)?.ok_or_else(|| {
+        anyhow!(
+            "network LLM is disabled. Set MEMORA_ENABLE_NETWORK_LLM=1 and configure .memora/config.toml"
+        )
+    })
 }
 
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
@@ -721,68 +751,5 @@ fn parse_privacy(raw: Option<&str>) -> Result<Privacy> {
         "private" => Ok(Privacy::Private),
         "secret" => Ok(Privacy::Secret),
         other => Err(anyhow!("invalid privacy value: {other}")),
-    }
-}
-
-fn build_llm(provider: LlmProvider, model: Option<String>) -> Result<Arc<dyn LlmClient>> {
-    let allow_network = std::env::var("MEMORA_ENABLE_NETWORK_LLM")
-        .map(|v| v == "1")
-        .unwrap_or(false);
-    if allow_network {
-        match make_client(provider, model, None, None) {
-            Ok(client) => Ok(client),
-            Err(_) => Ok(Arc::new(FallbackLlm)),
-        }
-    } else {
-        Ok(Arc::new(FallbackLlm))
-    }
-}
-
-struct FallbackLlm;
-
-#[async_trait]
-impl LlmClient for FallbackLlm {
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
-        let content = req
-            .messages
-            .first()
-            .map(|m| m.content.as_str())
-            .unwrap_or_default();
-        let response = if req.json_mode {
-            if content.contains("proposal") || content.contains("action") {
-                "{\"action\":\"archive\"}".to_string()
-            } else {
-                "{\"proposed_subregions\":[]}".to_string()
-            }
-        } else if content.contains("[claim:") {
-            let marker = content
-                .split("[claim:")
-                .nth(1)
-                .and_then(|tail| tail.split(']').next())
-                .unwrap_or("unknown");
-            format!("[claim:{marker}]")
-        } else if content.contains("Summarize this contradiction") {
-            "Potential contradiction detected.".to_string()
-        } else if content.contains("clarifying question") {
-            "What source confirms this claim?".to_string()
-        } else if content.contains("Write 200-300 words") {
-            "Fallback region index narrative.".to_string()
-        } else {
-            "Fallback Memora response.".to_string()
-        };
-        Ok(CompletionResponse {
-            text: response,
-            model: "fallback/local".to_string(),
-            input_tokens: None,
-            output_tokens: None,
-        })
-    }
-
-    fn model_name(&self) -> &str {
-        "fallback/local"
-    }
-
-    fn destination(&self) -> LlmDestination {
-        LlmDestination::Local
     }
 }

@@ -12,6 +12,7 @@ use memora_llm::{LlmClient, LlmError};
 use crate::claims::privacy_markers::{parse_privacy_spans, privacy_for_span};
 use crate::claims::Claim;
 use crate::note::Note;
+use crate::privacy::body_for_llm_extraction;
 
 pub const EXTRACTION_PROMPT_TEMPLATE: &str = r#"You extract atomic factual claims from a note as JSON.
 
@@ -153,6 +154,22 @@ pub(crate) struct LlmClaimRecord {
 pub struct ClaimExtractor {
     pub llm: Arc<dyn LlmClient>,
     pub model_label: String,
+    pub redact_secret_in_cloud: bool,
+}
+
+impl ClaimExtractor {
+    pub fn new(llm: Arc<dyn LlmClient>, model_label: impl Into<String>) -> Self {
+        Self {
+            llm,
+            model_label: model_label.into(),
+            redact_secret_in_cloud: true,
+        }
+    }
+
+    pub fn with_redact_secret_in_cloud(mut self, enabled: bool) -> Self {
+        self.redact_secret_in_cloud = enabled;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,7 +209,23 @@ impl ClaimExtractor {
         body: &str,
     ) -> Result<ClaimExtractionResult, ClaimExtractionError> {
         let marker_spans = parse_privacy_spans(body);
-        let prompt = self.build_prompt(note, body);
+        let destination = self.llm.destination();
+        let Some(body_for_llm) = body_for_llm_extraction(
+            body,
+            note.fm.privacy,
+            destination,
+            self.redact_secret_in_cloud,
+        ) else {
+            tracing::warn!(
+                note_id = %note.fm.id,
+                "skipping claim extraction for secret note on cloud LLM destination"
+            );
+            return Ok(ClaimExtractionResult {
+                claims: Vec::new(),
+                disposition: ClaimExtractionDisposition::Empty,
+            });
+        };
+        let prompt = self.build_prompt(note, &body_for_llm);
         let text = self
             .llm
             .chat_json(&prompt, None, 2_000, 0.1)
@@ -229,7 +262,7 @@ impl ClaimExtractor {
                 parsed_count = records.len(),
                 "first extraction returned all-invalid claims; retrying with feedback"
             );
-            let retry_prompt = self.build_retry_prompt(note, body);
+            let retry_prompt = self.build_retry_prompt(note, &body_for_llm);
             let retry_text = self
                 .llm
                 .chat_json(&retry_prompt, None, 2_000, 0.05)
@@ -287,8 +320,8 @@ impl ClaimExtractor {
         claims
     }
 
-    fn build_retry_prompt(&self, note: &Note, body: &str) -> String {
-        let base = self.build_prompt(note, body);
+    fn build_retry_prompt(&self, note: &Note, body_for_llm: &str) -> String {
+        let base = self.build_prompt(note, body_for_llm);
         format!(
             "{base}\n\
              \n\
@@ -726,12 +759,12 @@ mod tests {
     }
 
     fn make_extractor(canned_response: &str) -> ClaimExtractor {
-        ClaimExtractor {
-            llm: Arc::new(MockExtractorLlm {
+        ClaimExtractor::new(
+            Arc::new(MockExtractorLlm {
                 canned_response: canned_response.to_string(),
             }),
-            model_label: "test/extractor".to_string(),
-        }
+            "test/extractor",
+        )
     }
 
     #[test]
@@ -1028,10 +1061,10 @@ mod tests {
         let good = format!(
             r#"[{{"subject":"Rado","predicate":"works_at","object":"HMC","span_start":{good_start},"span_end":{good_end},"valid_from":null,"valid_until":null,"confidence":1.0}}]"#
         );
-        let extractor = ClaimExtractor {
-            llm: Arc::new(MockSequentialExtractorLlm::new(vec![bad.to_string(), good])),
-            model_label: "test/retry".to_string(),
-        };
+        let extractor = ClaimExtractor::new(
+            Arc::new(MockSequentialExtractorLlm::new(vec![bad.to_string(), good])),
+            "test/retry",
+        );
         let note = make_note("retry-ok", body, Privacy::Private);
         let claims = extractor.extract(&note, body).await.expect("extract");
         assert_eq!(claims.len(), 1);
@@ -1043,13 +1076,13 @@ mod tests {
         let body = "short.";
         let bad =
             r#"[{"subject":"ghost","predicate":"nope","object":"x","span_start":0,"span_end":2}]"#;
-        let extractor = ClaimExtractor {
-            llm: Arc::new(MockSequentialExtractorLlm::new(vec![
+        let extractor = ClaimExtractor::new(
+            Arc::new(MockSequentialExtractorLlm::new(vec![
                 bad.to_string(),
                 bad.to_string(),
             ])),
-            model_label: "test/noretry".to_string(),
-        };
+            "test/noretry",
+        );
         let note = make_note("retry-stop", body, Privacy::Private);
         let claims = extractor.extract(&note, body).await.expect("extract");
         assert!(claims.is_empty());
