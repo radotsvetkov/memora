@@ -290,14 +290,17 @@ Privacy is applied during extraction and enforced before prompt construction.
 1. Parser reads note-level frontmatter privacy.
 2. Parser reads inline privacy markers in body spans.
 3. Each extracted claim receives `privacy = max(note_level, inline_level)`.
-4. Query pipeline applies privacy filter before prompt assembly.
-5. Prompt builder accepts typed claim wrappers that distinguish:
+4. Cloud LLM extraction prompts redact secret inline spans (length-preserving) and
+   skip wholly secret notes.
+5. Query pipeline applies privacy filter before prompt assembly.
+6. Prompt builder accepts typed claim wrappers that distinguish:
    - local-safe claims
    - redacted claims for cloud transport
-6. For cloud model calls, secret claims are transformed:
+7. For cloud model calls, secret claims are transformed:
    - `subject` preserved
    - `predicate`, `object` replaced with `[redacted]`
-7. Non-redacted secret claims are rejected by type constraints and cannot enter
+8. MCP `memora_get_note` redacts secret note bodies at the read boundary.
+9. Non-redacted secret claims are rejected by type constraints and cannot enter
    outbound model payload construction.
 
 This architecture turns privacy from a policy suggestion into a compile-time and

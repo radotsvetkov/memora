@@ -129,16 +129,22 @@ Use with Claude Desktop (`claude_desktop_config.json`):
     "memora": {
       "command": "/absolute/path/to/memora-mcp",
       "env": {
-        "MEMORA_VAULT": "/absolute/path/to/your-vault"
+        "MEMORA_VAULT": "/absolute/path/to/your-vault",
+        "MEMORA_ENABLE_NETWORK_LLM": "1"
       }
     }
   }
 }
 ```
 
+`MEMORA_ENABLE_NETWORK_LLM=1` is required for MCP consolidate, challenge, and
+LLM-backed cited synthesis. Cited queries still work offline via extractive
+verified fallback (`degraded: true`). MCP reads embedder and privacy settings
+from `{vault}/.memora/config.toml`.
+
 ## Status
 
-v0.1.27. Indexes 100-note vaults in 5 to 10 minutes with Claude Haiku for about $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target. Larger scales are unmeasured. The active challenger now surfaces decisions, contradictions, stale dependencies, and open questions in every atlas.
+v0.1.28. Indexes 100-note vaults in 5 to 10 minutes with Claude Haiku for about $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target. Larger scales are unmeasured. The active challenger surfaces decisions, contradictions, stale dependencies, and open questions in every atlas. v0.1.28 hardens privacy at extraction and MCP read boundaries, vault path validation, and watch-time claim extraction.
 
 Issues, edge cases, and design discussions welcome at [github.com/radotsvetkov/memora/issues](https://github.com/radotsvetkov/memora/issues).
 

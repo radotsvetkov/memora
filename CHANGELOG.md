@@ -2,8 +2,22 @@
 
 ## [Unreleased]
 
-### Added
-- Initial project scaffolding.
+## [0.1.28] - 2026-05-28
+
+### Fixed
+- Redact secret inline spans before cloud LLM claim extraction; skip extraction for wholly secret notes on cloud destinations.
+- MCP `memora_get_note` redacts secret note bodies and sets `body_redacted`; query snippets respect note privacy.
+- Reject vault path traversal in `memora_capture` and constrain indexed note reads to the vault root.
+- Preserve existing claims when claim extraction fails transiently instead of deleting them.
+- Wire claim extraction into `memora watch` so the claim graph stays current during file watching.
+- MCP `memora_record_useful` returns an error when `query_id` is unknown.
+
+### Changed
+- MCP loads embedder and retrieval settings from `.memora/config.toml` (parity with CLI).
+- MCP cited queries use extractive verified fallback when network LLM is disabled (`degraded: true`).
+- MCP consolidate/challenge require `MEMORA_ENABLE_NETWORK_LLM=1` and a configured provider.
+- Privacy settings from `[privacy]` in config are applied to the query pipeline (`redact_secret_in_cloud`, `warn_on_secret_query`).
+- Shared `DeterministicEmbedder`, `build_embedder`, and `VaultConfig` moved into `memora-core`.
 
 ## [0.1.27] - 2026-05-04
 

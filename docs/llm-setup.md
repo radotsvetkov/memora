@@ -9,7 +9,17 @@ Memora sends `keep_alive: "24h"` on `/api/chat` calls so Ollama keeps the loaded
 
 ## Recommended local config
 
-Use the same model values documented for v0.1.26:
+Use the same model values documented in `docs/src/models.md`:
+
+## MCP network LLM
+
+Set `MEMORA_ENABLE_NETWORK_LLM=1` in the MCP server environment for tools that
+call a network LLM (`memora_consolidate`, `memora_challenge`, and LLM-backed
+`memora_query_cited`). Without it, cited queries use extractive verified fallback.
+
+MCP loads LLM and embed settings from `{vault}/.memora/config.toml`.
+
+## Example vault config
 
 ```toml
 [llm]

@@ -113,7 +113,7 @@ answer footer, citation entries correspond to claim ids that survived validation
 Add one server entry to your MCP config:
 
 ```json
-{"mcpServers":{"memora":{"command":"/usr/local/bin/memora-mcp","env":{"MEMORA_VAULT":"/absolute/path/to/brain"}}}}
+{"mcpServers":{"memora":{"command":"/usr/local/bin/memora-mcp","env":{"MEMORA_VAULT":"/absolute/path/to/brain","MEMORA_ENABLE_NETWORK_LLM":"1"}}}}
 ```
 
 <details>
