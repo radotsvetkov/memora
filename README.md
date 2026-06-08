@@ -8,7 +8,7 @@ Memora is a local verification layer for AI memory. It re-reads the exact source
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-3b82f6)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-f59e0b)](rust-toolchain.toml)
-[![Version](https://img.shields.io/badge/version-0.1.28-10b981)](CHANGELOG.md)
+[![crates.io](https://img.shields.io/crates/v/memora-core)](https://crates.io/crates/memora-core)
 [![Local-first](https://img.shields.io/badge/local--first-yes-10b981)](#)
 
 → **[See it in motion](https://radotsvetkov.github.io/memora)**
@@ -85,7 +85,7 @@ Memora is behind on scale, integrations, multimodal ingestion, and ecosystem, an
 
 ## Use it as a library
 
-Memora is embeddable. The owned `Memora` facade opens a vault and verifies citations from your own Rust code, with no lifetimes to thread through:
+Memora is embeddable. Add it with `cargo add memora-core`. The owned `Memora` facade opens a vault and verifies citations from your own Rust code, with no lifetimes to thread through:
 
 ```rust
 use memora_core::Memora;
@@ -134,10 +134,10 @@ Indexing a 100-note vault costs about $0.30 and takes roughly 5 to 10 minutes at
 
 ## Quickstart
 
-Install with cargo, or download a release binary:
+Install from crates.io, or download a release binary:
 
 ```bash
-cargo install --path crates/memora-cli
+cargo install memora-cli
 ```
 
 Configure `~/.config/memora/config.toml`:
@@ -194,7 +194,6 @@ Issues, edge cases, and design discussions are welcome on the [issue tracker](ht
 - PDF, web clipping, and transcript ingestion
 - A GUI for the claim graph and atlas review
 - Entailment scoring (today: provenance integrity only)
-- A published crates.io release (the embeddable `Memora` library facade exists today)
 
 ## Docs, contributing, license
 
