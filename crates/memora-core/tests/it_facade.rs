@@ -101,3 +101,31 @@ async fn facade_opens_a_vault_and_verifies_citations() -> Result<()> {
 
     Ok(())
 }
+
+/// `query_verified` must refuse a cloud LLM provider unless network access is
+/// explicitly enabled, so a config line cannot silently send prompts off-machine.
+#[tokio::test]
+async fn query_verified_gates_cloud_provider_without_the_flag() -> Result<()> {
+    std::env::remove_var("MEMORA_ENABLE_NETWORK_LLM");
+
+    let temp = tempdir()?;
+    let vault = temp.path().join("vault");
+    let memora_dir = vault.join(".memora");
+    fs::create_dir_all(&memora_dir)?;
+    // Cloud LLM provider, but a local embedder so open() itself succeeds.
+    fs::write(
+        memora_dir.join("config.toml"),
+        "[llm]\nprovider = \"anthropic\"\n\n[embed]\nprovider = \"deterministic\"\nmodel = \"m\"\ndim = 64\n",
+    )?;
+
+    let memora = Memora::open(&vault)?;
+    let err = memora
+        .query_verified("anything", 5)
+        .await
+        .expect_err("cloud provider must be gated without the network flag");
+    assert!(
+        err.to_string().contains("MEMORA_ENABLE_NETWORK_LLM"),
+        "error should point at the network flag, got: {err}"
+    );
+    Ok(())
+}

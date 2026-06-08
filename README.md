@@ -95,7 +95,7 @@ let answer = memora.validate("drift uses MessagePack [claim:0123456789abcdef].")
 println!("{} verified, {} rejected", answer.verified_count, answer.unverified_count);
 ```
 
-`validate` is pure verification: no network, no LLM. `search` and `claim` are also available.
+`validate` is pure verification (no network, no LLM). `query_verified` generates an answer with the configured LLM and re-validates every citation before returning it. `search` and `claim` are also available. The CLI's `query` command runs on this same facade.
 
 ## Verify in CI
 

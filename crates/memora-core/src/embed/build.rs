@@ -8,17 +8,7 @@ use super::deterministic::DeterministicEmbedder;
 use super::{Embedder, OllamaEmbedder, OpenAiEmbedder};
 use crate::vault_config::{EmbedConfig, LlmConfig};
 
-/// Cloud embedding providers transmit note bodies and query text to a remote
-/// endpoint, so — exactly like the cloud LLM clients — they are refused unless
-/// `MEMORA_ENABLE_NETWORK_LLM=1` is set. This gate lives in core so that EVERY
-/// caller is covered (the CLI and the MCP server both build embedders through
-/// this function); local providers (`deterministic`, `ollama`) never touch the
-/// network and are always allowed.
-fn network_llm_enabled() -> bool {
-    std::env::var("MEMORA_ENABLE_NETWORK_LLM")
-        .map(|value| value == "1")
-        .unwrap_or(false)
-}
+use crate::vault_config::network_llm_enabled;
 
 pub fn build_embedder(embed: &EmbedConfig, llm: &LlmConfig) -> Result<Arc<dyn Embedder>> {
     match embed.provider.as_str() {

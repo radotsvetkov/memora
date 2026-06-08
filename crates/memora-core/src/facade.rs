@@ -20,14 +20,17 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use memora_llm::{make_client, LlmClient, LlmProvider};
 
+use crate::answer::AnsweringPipeline;
 use crate::cite::{CitationValidator, CitedAnswer};
 use crate::claims::{Claim, ClaimStore};
 use crate::embed::{build_embedder, Embedder};
 use crate::index::{Index, VectorIndex};
+use crate::privacy::PrivacyFilter;
 use crate::retrieve::{HybridRetriever, RetrievalHit};
-use crate::vault_config::VaultConfig;
+use crate::vault_config::{network_llm_enabled, VaultConfig};
 
 /// An open Memora vault: the SQLite claim index, the vector index, the embedder,
 /// and the resolved configuration. Cheap to keep around; clone-free borrows are
@@ -100,6 +103,64 @@ impl Memora {
             embedder: self.embedder.as_ref(),
         };
         retriever.search(query, k).await
+    }
+
+    /// Generate an answer to `query` using the configured LLM, with every cited
+    /// claim re-validated before it is returned (hallucinated citations stripped,
+    /// the model retried with verified context only).
+    ///
+    /// Cloud providers are gated: with `[llm] provider = "anthropic"` or
+    /// `"openai"`, this fails unless `MEMORA_ENABLE_NETWORK_LLM=1` is set, so a
+    /// config line cannot silently send prompts off-machine. Use [`validate`] or
+    /// [`search`] for fully offline, no-LLM operation.
+    ///
+    /// [`validate`]: Self::validate
+    /// [`search`]: Self::search
+    pub async fn query_verified(&self, query: &str, k: usize) -> Result<CitedAnswer> {
+        let provider = self.config.llm_provider();
+        let llm = self.gated_llm_client(provider)?;
+        let store = ClaimStore::new(&self.index);
+        let validator = CitationValidator {
+            store: &store,
+            index: &self.index,
+            vault_root: &self.vault_root,
+        };
+        let retriever = HybridRetriever {
+            index: &self.index,
+            vec: &self.vector,
+            embedder: self.embedder.as_ref(),
+        };
+        let privacy_config = self.config.privacy_config();
+        let pipeline = AnsweringPipeline {
+            retriever: &retriever,
+            claim_store: &store,
+            validator: &validator,
+            llm: Some(llm.as_ref()),
+            privacy_filter: PrivacyFilter::new_for_provider(provider, &privacy_config),
+            privacy_config,
+        };
+        pipeline.answer(query, k).await
+    }
+
+    /// Build the configured LLM client, refusing to construct a cloud client
+    /// unless network access is explicitly enabled. Mirrors the CLI/MCP gate.
+    fn gated_llm_client(&self, provider: LlmProvider) -> Result<Arc<dyn LlmClient>> {
+        let is_cloud = matches!(provider, LlmProvider::Anthropic | LlmProvider::OpenAi);
+        if is_cloud && !network_llm_enabled() {
+            return Err(anyhow!(
+                "LLM provider `{}` sends prompts to a cloud endpoint, but network LLM access \
+                 is disabled. Set MEMORA_ENABLE_NETWORK_LLM=1 to allow it, or use a local \
+                 provider (`[llm] provider = \"ollama\"`).",
+                self.config.llm.provider
+            ));
+        }
+        make_client(
+            provider,
+            self.config.llm.model.clone(),
+            self.config.llm.endpoint.clone(),
+            self.config.llm.embedding_model.clone(),
+        )
+        .map_err(|err| anyhow!("failed to configure LLM client: {err}"))
     }
 
     /// Fetch a single claim by id, if it exists.

@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use memora_core::{build_embedder, Embedder, Index, Vault, VectorIndex};
 use memora_llm::{make_client, LlmClient, LlmProvider};
 
-use crate::config::{AppConfig, EmbedConfig, LlmConfig};
+use crate::config::{EmbedConfig, LlmConfig};
 
 /// Map a configured provider string to an [`LlmProvider`]. Unknown values fall
 /// back to the local Ollama provider.
@@ -95,10 +95,6 @@ pub fn build_embedder_from_app(
         ));
     }
     build_embedder(&cfg.to_core(), &llm.to_core())
-}
-
-pub fn privacy_config_from_app(cfg: &AppConfig) -> memora_core::PrivacyConfig {
-    cfg.privacy.to_core()
 }
 
 trait ToCoreEmbed {

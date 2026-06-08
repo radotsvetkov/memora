@@ -67,6 +67,15 @@ pub fn global_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(".config").join("memora").join("config.toml"))
 }
 
+/// Whether cloud LLM/embedding egress is explicitly enabled. Off by default, so
+/// configuring a cloud provider never silently sends vault content off-machine.
+/// Used by the embedder builder, the LLM client gate, and the MCP server.
+pub fn network_llm_enabled() -> bool {
+    std::env::var("MEMORA_ENABLE_NETWORK_LLM")
+        .map(|value| value == "1")
+        .unwrap_or(false)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
     pub provider: String,
