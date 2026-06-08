@@ -18,15 +18,18 @@ drift switched to MessagePack for serialization [claim:drf75a1c9e10b2aa]
 2. Resolve each claim ID from SQLite.
 3. Resolve note path and byte span.
 4. Re-read source span from markdown body.
-5. Recompute BLAKE3 fingerprint.
-6. Optionally verify quote overlap.
+5. Recompute full-width BLAKE3 (256-bit) fingerprint and compare. Legacy 64-bit
+   fingerprints written by older versions still verify until the vault is re-indexed.
+6. Optionally verify quote overlap (substring containment — provenance, not entailment).
+7. Check temporal validity: a claim whose `valid_until` has passed is `superseded`.
 
 ## Status values
 
 - `verified`
-- `unverified` (claim missing)
-- `fingerprint_mismatch` (source changed)
-- `quote_mismatch` (marker quote unsupported)
+- `unverified` (claim missing / hallucinated id)
+- `fingerprint_mismatch` (source changed since extraction)
+- `quote_mismatch` (marker quote not contained in the span)
+- `superseded` (provenance intact, but the claim's `valid_until` has expired — surfaced, not asserted as current)
 
 ## Verified answer semantics
 

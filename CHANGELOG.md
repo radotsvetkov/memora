@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+- Type-enforced redaction choke-point (`RedactedPayload`) at the LLM wire boundary: secret claim content cannot reach a cloud provider without passing through redaction, enforced across the challenger, answer, consolidate, contradiction, and extraction paths (forgetting to redact a new egress site is now a compile error).
+- `Superseded` citation status: a cited claim whose `valid_until` has expired is surfaced as superseded rather than asserted as current. Exposed via the validator, `CitedAnswer.superseded_count`, and MCP `memora_verify_claim` (`superseded` + `valid_until`).
+- Deterministic, no-API-key citation-rejection benchmark (`make bench` → `bench_citation_rejection`): measures fabricated-citation rejection rate and valid-citation preservation rate over a labeled fixture, exits non-zero on regression (CI gate for the core contract).
+
+### Changed
+- Citation fingerprints are now full-width blake3 (256-bit) instead of 64-bit truncated. Legacy 64-bit fingerprints from older indexes still verify until the vault is re-indexed.
+- Cloud embedding providers (`[embed] provider = "openai"`) are gated behind `MEMORA_ENABLE_NETWORK_LLM=1` in `memora-core` (covering both CLI and MCP), and the real `OpenAiEmbedder` is now wired (it previously fell through to deterministic local vectors).
+- CLI cloud LLM and embedding calls are gated behind `MEMORA_ENABLE_NETWORK_LLM=1` (parity with MCP); a config line can no longer silently route content off-machine.
+- Secret-claim subjects are redacted (not only predicate/object) before cloud calls.
+- Repositioned README, docs, and landing page around verifiable citation rejection; dropped the "cognitive memory" framing; added an explicit "provenance integrity, not entailment" boundary; rewrote the comparison to confront Mem0/Zep/Letta/Cognee and the Anthropic Citations API honestly.
+
+### Fixed
+- The challenger now routes all prompts through the privacy filter (it previously embedded raw secret claims and note spans into cloud prompts).
+- Removed fabricated placeholder benchmark numbers: `bench_personal_vault` printed hardcoded metrics (0.94/0.88/0.00) and `bench_locomo` returned `retrieval@k = 1.0` for any non-empty fixture; both are now honest.
+
 ## [0.1.28] - 2026-05-28
 
 ### Fixed

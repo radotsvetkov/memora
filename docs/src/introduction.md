@@ -1,11 +1,12 @@
 # Memora
 
-**Verifiable cognitive memory for personal vaults. Cite-or-it-didn't-happen.**
+**Catch your AI citing sources that don't say what it claims. Cite, or it didn't happen.**
 
 Memora retrieves *claims*, not notes - atomic facts with source-span pointers,
-validity windows, and privacy bands. Every LLM citation is architecturally
-validated against your markdown. Hallucinations are caught structurally, not
-by trust.
+validity windows, and privacy bands. When the model answers, Memora re-reads the
+verbatim source span behind every citation and recomputes its blake3 hash;
+citations the source doesn't contain are rejected before the answer reaches you.
+Hallucinated citations are caught structurally, not by trust.
 
 → **[See the architecture in motion](https://radotsvetkov.github.io/memora)**
 
@@ -39,6 +40,15 @@ that don't match. Hallucinated ids get stripped and the LLM is re-prompted
 with verified-only context. **The citation contract is enforced by Rust types
 and span hashes, not by prompt obedience.**
 
+## What it guarantees - and what it does not
+
+- **Provenance integrity (guaranteed):** the cited source span verbatim exists, is
+  unmodified (hash-proven via full-width blake3), and contains any quoted text. This
+  is strictly stronger than model-asserted citation APIs.
+- **Entailment (not guaranteed):** Memora verifies that the source *says* the quoted
+  text, not that the quote *supports* the surrounding conclusion. Entailment scoring
+  is on the roadmap; today, provenance is the contract.
+
 ## What you get
 
 | | |
@@ -48,7 +58,7 @@ and span hashes, not by prompt obedience.**
 | **Time-aware reasoning** | Claims have validity windows. "What was true in March" is queryable. Contradictions auto-supersede. |
 | **Per-claim privacy** | Inline `<!--privacy:secret-->...<!--/privacy-->` markers. Secrets redacted at the wire boundary on cloud LLMs, type-system enforced. |
 | **Active challenger** | Daily background worker surfaces stale claims, contradictions, cross-region patterns, and frontier gaps in your `world_map.md`. |
-| **Hybrid retrieval** | BM25 + embedding + RRF fusion + Hebbian co-activation learning + spreading activation via wikilinks. |
+| **Hybrid retrieval** | BM25 + embedding + reciprocal-rank fusion. |
 | **Local-first** | Single Rust binary. SQLite + HNSW. Works fully offline with Ollama. |
 | **Obsidian-native** | Plain markdown vault with frontmatter. Open and edit in Obsidian alongside Memora. |
 | **MCP-native** | Drop into Claude Code, Cursor, or any MCP client over stdio. |
@@ -58,7 +68,7 @@ and span hashes, not by prompt obedience.**
 - **[Quickstart](./quickstart.md)** - install and first verified citation in 10 minutes.
 - **[Architecture](./architecture.md)** - claim graph, retrieval, validation pipeline.
 - **[Obsidian guide](./obsidian-guide.md)** - daily-driver setup with Claude Code.
-- **[Comparison](./comparison.md)** - vs RAG, LLM Wiki, and other systems.
+- **[Comparison](./comparison.md)** - honest breakdown vs Mem0, Zep, Letta, and Anthropic Citations.
 - **[MCP tools](./mcp-tools.md)** - every tool, with examples.
 
 ## Status

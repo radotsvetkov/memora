@@ -1,39 +1,75 @@
 # Memora
 
-Verifiable cognitive memory for personal vaults. Cite, or it didn't happen.
+**Catch your AI citing sources that don't say what it claims.** Memora re-reads the verbatim source span behind every citation and recomputes its blake3 hash — citations the source doesn't actually contain are stripped before the answer reaches you.
 
-→ **[See the architecture in motion](https://radotsvetkov.github.io/memora)**
+*Cite, or it didn't happen.*
+
+→ **[See it in motion](https://radotsvetkov.github.io/memora)**
+
+Memora is a local, single Rust binary (CLI + MCP server) that puts a verification layer between your markdown notes and an LLM. It extracts atomic **claims** with byte-level provenance, and when the model answers, it **rejects any citation it cannot re-prove against the source**. Works in Claude Desktop, Cursor, and any MCP client.
 
 ## The problem
 
-Teams write decisions in Obsidian, then lose track of what was decided, what changed, and what is stale. Most note-aware AI tools retrieve chunks and trust the model to cite correctly. That trust breaks under pressure. Memora extracts atomic claims with span-level provenance, then validates citations against source spans before an answer is returned.
+Note-aware AI tools — RAG over Obsidian, second-brain wrappers, agent memory layers — retrieve text and then *trust the model to quote it faithfully*. When the model invents a meeting that never happened, puts words in someone's mouth, or cites a claim your notes don't contain, you have no structural defense. You either catch the hallucination yourself, or you ship it. For decisions, meeting notes, and anything an agent acts on, that is the wrong trust model.
 
-## How Memora differs
+## What Memora does differently
 
 The atomic unit of memory is a **claim**, not a note. A claim is an extracted statement with:
 
 - subject, predicate, object
 - source note plus byte-range span
-- blake3 fingerprint of the source text
+- **full-width blake3 (256-bit) fingerprint** of the source text
 - valid_from and valid_until temporal window
 - privacy band (public / private / secret)
 - provenance edges to source claims when synthesized
 
-When the LLM answers, it cites claim IDs. The validator re-reads the source span from markdown, recomputes the fingerprint, and rejects citations that do not match. Unknown IDs are stripped and the model is retried with verified context only. The citation contract is enforced by Rust types and span hashes, not prompt compliance.
+When the LLM answers, it cites claim IDs. The validator re-reads the source span from your markdown, recomputes the fingerprint, and **rejects citations that do not match**. Unknown IDs are stripped; a superseded claim (expired `valid_until`) is flagged rather than asserted as current; and the model is retried with verified context only. **The citation contract is enforced by Rust types and span hashes, not by prompt compliance.**
+
+## What it guarantees — and what it does not
+
+Be precise about the promise, because precision is the point:
+
+- **It guarantees provenance integrity.** The cited source span verbatim exists and is unmodified (hash-proven), and any quoted text is actually contained in that span. This is strictly stronger than model-asserted citation APIs, which return offsets the model claims without re-reading and re-hashing them.
+- **It does not check entailment.** Memora verifies that the source *says* the quoted text — not that the quote *supports* the surrounding conclusion. A model can cite a real span and still draw an unsupported inference. Entailment scoring is on the roadmap; today, provenance is the contract.
+
+## Reproducible proof
+
+The differentiator is measurable, deterministically, with no API key:
+
+```bash
+make bench   # cargo run -p memora-bench --bin bench_citation_rejection
+```
+
+Over a labeled fixture covering every failure mode (hallucinated claim id, source edited after extraction → fingerprint mismatch, quote not present in the span), Memora **rejects 100% of fabricated citations and preserves 100% of valid ones**. A naive RAG / prompt-cite pipeline rejects **0%** by construction — it performs no post-generation verification. The harness exits non-zero on any regression, so it doubles as a CI gate for the core contract.
+
+> Honesty note: this is the one metric Memora is built to win and the only quantitative claim in this README. Other quality numbers (retrieval accuracy, contradiction precision over a real vault) are **not yet measured** — the placeholder benchmark that once printed fabricated constants has been removed.
 
 ## What you get
 
 | | |
 |---|---|
-| **Verified citations** | Every claim ID in an answer is re-validated against source spans before the answer is returned. |
+| **Verified citations** | Every claim ID in an answer is re-validated against its source span before the answer is returned. Hallucinated and mismatched citations are stripped. |
 | **Provenance + staleness** | Synthesis claims point to source claims. Edit a source note, dependent syntheses are marked stale. |
-| **Time-aware reasoning** | Claims carry validity windows. Historical states remain queryable while current state stays clear. |
-| **Per-claim privacy** | Inline `<!--privacy:secret-->...<!--/privacy-->` markers apply sub-span privacy and cloud calls redact secret claim bodies. |
+| **Time-aware reasoning** | Claims carry validity windows. Historical states stay queryable; superseded claims are flagged, not silently surfaced as current. |
+| **Per-claim privacy** | Inline `<!--privacy:secret-->...<!--/privacy-->` markers apply sub-span privacy. Secret content is redacted at a single type-enforced wire boundary (`RedactedPayload`) before any cloud LLM or embedding call. |
 | **Active challenger** | A daily challenger run surfaces decisions, contradictions, stale dependencies, and open questions in `world_map.md`. |
-| **Hybrid retrieval** | BM25 plus embeddings plus rank fusion, then graph-aware expansion over claim links and wikilinks. |
-| **Local-first** | Single Rust binary with SQLite and HNSW. Full local operation is available with Ollama. |
+| **Hybrid retrieval** | BM25 plus embeddings plus reciprocal-rank fusion. |
+| **Local-first** | Single Rust binary with SQLite and HNSW. Cloud LLM/embedding calls are off by default and gated behind an explicit flag; full local operation with Ollama. |
 | **Obsidian-native** | Plain markdown vault with frontmatter. Keep editing in Obsidian. |
 | **MCP-native** | Works with Claude Desktop, Cursor, and other MCP clients over stdio. |
+
+## How Memora compares
+
+Memora makes one claim no funded memory vendor makes: **post-generation, hash-reverified citation rejection.** It re-reads the verbatim span and recomputes the fingerprint; mismatches are stripped before the answer ships.
+
+| | Memora | Mem0 / Zep / Letta / Cognee | Anthropic Citations API |
+|---|---|---|---|
+| Hash-reverified citation rejection | **Yes** | No (no re-read / rejection) | Model-asserted, not re-hashed |
+| Entailment (does the quote *support* the claim) | No — provenance only, by design | Partial (LLM-judged) | No |
+| Temporal validity / contradiction handling | Yes | Yes (Zep/Graphiti) | — |
+| Scale, integrations, multimodal, hosted offering | Behind | Ahead | — |
+
+Memora is behind on scale, integrations, multimodal ingestion, and ecosystem — and would rather you knew. It is not here to replace your memory store; it is the local check that rejects what your AI can't prove. See [docs/comparison.md](docs/src/comparison.md) for the full, honest breakdown.
 
 ## Recommended models
 
@@ -49,7 +85,7 @@ provider = "anthropic"
 model = "claude-haiku-4-5-20251001"
 ```
 
-Cost: about $0.30 to index a 100-note vault. Speed: 5 to 10 minutes with parallelism = 8. Anthropic's free tier limits requests to 50 per minute. Add at least $5 of credit to reach Tier 1, or set parallelism = 1 to stay under the free limit.
+Cost: roughly $0.30 to index a 100-note vault. Speed: about 5 to 10 minutes with parallelism = 8 (estimates from development runs, not a published benchmark). Anthropic's free tier limits requests to 50 per minute. Add at least $5 of credit to reach Tier 1, or set parallelism = 1 to stay under the free limit.
 
 ### OpenAI gpt-5-mini (alternative)
 
@@ -73,7 +109,7 @@ model = "qwen2.5:32b-instruct-q5_K_M"
 
 Honest assessment: Qwen 14B is insufficient for production (hallucinates relationships, produces shallow triples). Qwen 32B is acceptable but misses cross-region patterns. Llama 70B matches Haiku quality with significant memory cost. Below 32B parameters, atlas synthesis quality degrades noticeably.
 
-Embeddings always run locally regardless of chat provider:
+Embeddings always run locally by default:
 
 ```toml
 [embed]
@@ -137,14 +173,11 @@ Use with Claude Desktop (`claude_desktop_config.json`):
 }
 ```
 
-`MEMORA_ENABLE_NETWORK_LLM=1` is required for MCP consolidate, challenge, and
-LLM-backed cited synthesis. Cited queries still work offline via extractive
-verified fallback (`degraded: true`). MCP reads embedder and privacy settings
-from `{vault}/.memora/config.toml`.
+By default, Memora never sends your notes to a cloud provider. Cloud LLM **and** cloud embedding calls are gated behind `MEMORA_ENABLE_NETWORK_LLM=1` — on the CLI and the MCP server alike — so a single config line cannot silently route content off-machine. With the flag unset, cited queries still work offline via the extractive verified fallback (`degraded: true`). MCP reads embedder and privacy settings from `{vault}/.memora/config.toml`.
 
 ## Status
 
-v0.1.28. Indexes 100-note vaults in 5 to 10 minutes with Claude Haiku for about $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target. Larger scales are unmeasured. The active challenger surfaces decisions, contradictions, stale dependencies, and open questions in every atlas. v0.1.28 hardens privacy at extraction and MCP read boundaries, vault path validation, and watch-time claim extraction.
+v0.1.28. Indexes 100-note vaults in roughly 5 to 10 minutes with Claude Haiku for about $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target; larger scales are unmeasured. The active challenger surfaces decisions, contradictions, stale dependencies, and open questions. Privacy redaction runs through a single type-enforced wire boundary covering every cloud egress (LLM and embeddings); citation fingerprints are full-width 256-bit blake3 (legacy 64-bit fingerprints from older indexes still verify until you re-index).
 
 Issues, edge cases, and design discussions welcome at [github.com/radotsvetkov/memora/issues](https://github.com/radotsvetkov/memora/issues).
 
@@ -153,7 +186,9 @@ Issues, edge cases, and design discussions welcome at [github.com/radotsvetkov/m
 - Mobile / non-Obsidian access
 - Local LLM at production quality
 - PDFs / web clippings / transcripts
-- GUI for atlas review
+- GUI for claim-graph and atlas review
+- Entailment scoring (today: provenance integrity only)
+- A stable embeddable SDK / library API (today: CLI + MCP)
 
 ## Docs, contributing, license
 

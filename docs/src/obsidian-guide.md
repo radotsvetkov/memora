@@ -1,6 +1,6 @@
 # Obsidian + Memora Daily Driver Guide
 
-**Verifiable cognitive memory for personal vaults. Cite-or-it-didn't-happen.**
+**Catch your AI citing sources that don't say what it claims. Cite, or it didn't happen.**
 
 Memora retrieves claims, not notes - atomic facts with source-span pointers,
 validity windows, and privacy bands. Every LLM citation is architecturally

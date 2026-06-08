@@ -1,6 +1,6 @@
 [book]
 title = "Memora"
-description = "Verifiable cognitive memory for personal vaults. Cite-or-it-didn't-happen."
+description = "Catch your AI citing sources that don't say what it claims. Cite, or it didn't happen."
 authors = ["Rado Tsvetkov"]
 language = "en"
 src = "src"
