@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- Distribution: Homebrew formula publishing via cargo-dist (tap `radotsvetkov/homebrew-tap`) for the CLI, alongside the existing shell installer and GitHub release binaries. crates.io readiness for the libraries (internal deps centralized in `[workspace.dependencies]` with versions; `memora-llm` and `memora-core` package cleanly). See `RELEASING.md` for both channels.
+- Distribution: Homebrew formula publishing via cargo-dist (tap `radotsvetkov/homebrew-memora`) for the CLI, alongside the existing shell installer and GitHub release binaries. crates.io readiness for the libraries (internal deps centralized in `[workspace.dependencies]` with versions; `memora-llm` and `memora-core` package cleanly). See `RELEASING.md` for both channels.
 - `memora verify`: verify an AI answer's citations against a vault and exit non-zero if any cannot be proven (reads a file or stdin, `--json` for machine output, `--allow-superseded`). Built on the `Memora` facade. Plus a reusable GitHub Action (`.github/actions/verify`) so a pipeline fails the build on an unprovable citation ("CI for hallucinations"). Verdict rendering is shared with `memora demo` via a single module.
 - `Memora::query_verified`: the LLM-backed cited-answer path on the facade (cloud providers gated behind `MEMORA_ENABLE_NETWORK_LLM`). The CLI `query` command is now a thin wrapper over the facade, removing duplicated wiring; the network gate is centralized in `memora_core::vault_config::network_llm_enabled`.
 - Owned `Memora` library facade (`Memora::open`, `validate`, `search`, `claim`) so the engine is embeddable from other Rust code without touching the lifetime-borrowed internals. `memora-core` gained crates.io metadata (description, keywords, categories).

@@ -34,14 +34,19 @@ publishes the Homebrew formula to the tap.
 
 ### One-time Homebrew setup (required before the first brew release)
 
-1. Create an empty public repo named **`radotsvetkov/homebrew-tap`**.
-2. Create a fine-grained Personal Access Token with `contents: write` on that tap
-   repo, and add it to the **memora** repo as the secret **`HOMEBREW_TAP_TOKEN`**.
+The tap repo **`radotsvetkov/homebrew-memora`** already exists. The only remaining
+step is the token:
+
+1. Create a fine-grained Personal Access Token (github.com/settings/tokens) with
+   repository access limited to **`radotsvetkov/homebrew-memora`** and the
+   **Contents: read and write** permission.
+2. Add it to the **memora** repo as the secret **`HOMEBREW_TAP_TOKEN`**
+   (`gh secret set HOMEBREW_TAP_TOKEN -R radotsvetkov/memora`, then paste it).
 
 After the next release, users can install with:
 
 ```bash
-brew install radotsvetkov/tap/memora
+brew install radotsvetkov/memora/memora
 ```
 
 Until the tap and token exist, the `publish-homebrew-formula` job will fail (the rest
