@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+description = "MCP server for Memora: verifiable, citation-checked memory tools over stdio for Claude Desktop, Cursor, and other MCP clients."
+keywords = ["mcp", "llm", "memory", "citations"]
+categories = ["command-line-utilities"]
 
 [package.metadata.wix]
 upgrade-guid = "AA2BED65-EB5E-4F1A-8CB6-A70CFDF6E781"

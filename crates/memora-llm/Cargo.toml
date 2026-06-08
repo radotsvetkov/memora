@@ -2,7 +2,12 @@
 name = "memora-llm"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Provider-agnostic LLM clients (Anthropic, OpenAI, Ollama) with a type-enforced redaction boundary, used by Memora."
+keywords = ["llm", "anthropic", "openai", "ollama"]
+categories = ["api-bindings"]
 
 [dependencies]
 anyhow.workspace = true
