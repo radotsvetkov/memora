@@ -24,8 +24,8 @@ async-trait.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 rusqlite.workspace = true
-memora-core = { path = "../memora-core" }
-memora-llm = { path = "../memora-llm" }
+memora-core.workspace = true
+memora-llm.workspace = true
 rmcp = { version = "0.1", features = ["transport-io"] }
 
 [dev-dependencies]

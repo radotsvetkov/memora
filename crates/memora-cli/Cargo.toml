@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+description = "Memora: catch your AI citing sources that don't say what it claims. Local verification layer for AI memory."
+homepage = "https://radotsvetkov.github.io/memora"
+keywords = ["llm", "rag", "hallucination", "citations", "memory"]
+categories = ["command-line-utilities", "text-processing"]
 
 [package.metadata.wix]
 upgrade-guid = "6DC48B12-C94B-4D32-8C5A-44CA13245270"
@@ -40,9 +44,9 @@ figment.workspace = true
 toml.workspace = true
 rusqlite.workspace = true
 dirs.workspace = true
-memora-core = { path = "../memora-core" }
-memora-llm = { path = "../memora-llm" }
-memora-mcp = { path = "../memora-mcp" }
+memora-core.workspace = true
+memora-llm.workspace = true
+memora-mcp.workspace = true
 rmcp = { version = "0.1", features = ["transport-io"] }
 tempfile.workspace = true
 

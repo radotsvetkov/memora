@@ -8,7 +8,6 @@ repository.workspace = true
 description = "Verifiable memory for AI: re-reads the source span behind every citation, recomputes its hash, and rejects what the source does not contain."
 keywords = ["llm", "rag", "hallucination", "citations", "memory"]
 categories = ["text-processing", "database"]
-readme = "../../README.md"
 
 [features]
 local-embed = ["fastembed"]
@@ -36,7 +35,7 @@ hnsw_rs.workspace = true
 bincode = "1.3"
 reqwest.workspace = true
 secrecy.workspace = true
-memora-llm = { path = "../memora-llm" }
+memora-llm.workspace = true
 fastembed = { version = "4", optional = true }
 serde_yaml = "0.9"
 uuid.workspace = true
