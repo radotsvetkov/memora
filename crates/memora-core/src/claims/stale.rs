@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 use chrono::Utc;
 use rusqlite::params;
@@ -66,10 +66,19 @@ impl<'a> StalenessTracker<'a> {
         source_claim_ids: &[String],
         reason: &str,
     ) -> Result<usize, IndexError> {
+        // Walk the provenance graph transitively: a change to a source claim
+        // makes its derivatives stale, and their derivatives in turn (A -> B ->
+        // C marks both B and C). `visited` is seeded with the source claims so
+        // they are never marked stale themselves and so cycles terminate.
         let mut stale_ids = BTreeSet::new();
-        for source_claim_id in source_claim_ids {
-            for derivative in self.prov.derivatives_of(source_claim_id)? {
-                stale_ids.insert(derivative);
+        let mut visited: BTreeSet<String> = source_claim_ids.iter().cloned().collect();
+        let mut queue: VecDeque<String> = source_claim_ids.iter().cloned().collect();
+        while let Some(current) = queue.pop_front() {
+            for derivative in self.prov.derivatives_of(&current)? {
+                if visited.insert(derivative.clone()) {
+                    stale_ids.insert(derivative.clone());
+                    queue.push_back(derivative);
+                }
             }
         }
 
@@ -87,5 +96,57 @@ impl<'a> StalenessTracker<'a> {
             )?;
         }
         Ok(stale_ids.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::tempdir;
+
+    use super::*;
+
+    #[test]
+    fn staleness_propagates_transitively() {
+        let temp = tempdir().expect("tempdir");
+        let index = Index::open(&temp.path().join("memora.db")).expect("index");
+        let prov = Provenance::new(&index);
+        // A -> B -> C: B derives from A, C derives from B.
+        prov.record("claim-b", &["claim-a"]).expect("record b<-a");
+        prov.record("claim-c", &["claim-b"]).expect("record c<-b");
+
+        let tracker = StalenessTracker::new(&index, &prov);
+        let marked = tracker
+            .mark_source_edited_claims(&["claim-a".to_string()])
+            .expect("mark");
+        assert_eq!(marked, 2, "both B and C should be marked stale, not just B");
+
+        let stale: BTreeSet<String> = tracker
+            .list_stale()
+            .expect("list")
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert!(stale.contains("claim-b"));
+        assert!(stale.contains("claim-c"));
+        assert!(
+            !stale.contains("claim-a"),
+            "the edited source itself must not be marked stale"
+        );
+    }
+
+    #[test]
+    fn staleness_terminates_on_cycles() {
+        let temp = tempdir().expect("tempdir");
+        let index = Index::open(&temp.path().join("memora.db")).expect("index");
+        let prov = Provenance::new(&index);
+        prov.record("y", &["x"]).expect("record y<-x");
+        prov.record("x", &["y"]).expect("record x<-y"); // cycle
+
+        let tracker = StalenessTracker::new(&index, &prov);
+        let marked = tracker
+            .mark_source_edited_claims(&["x".to_string()])
+            .expect("mark");
+        // x -> y, then y -> x (already visited as the source) stops the walk.
+        assert_eq!(marked, 1);
     }
 }

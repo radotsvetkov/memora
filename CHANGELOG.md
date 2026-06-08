@@ -22,6 +22,7 @@
 - Rebuilt the landing page with a cleaner, professional design (sans body type, restrained palette, accurate copy, an honest static render of `memora demo`) and polished the README to feature the demo and read more naturally.
 
 ### Fixed
+- Staleness propagation is now transitive: editing a source claim marks its derivatives and their derivatives in turn (A → B → C marks both B and C), with cycle protection. Previously only direct (single-hop) derivatives were marked.
 - First-run `database is locked` noise: establish WAL mode on a single connection before the pool opens connections concurrently, so they don't race the journal-mode switch on a fresh db.
 - The challenger now routes all prompts through the privacy filter (it previously embedded raw secret claims and note spans into cloud prompts).
 - Removed fabricated placeholder benchmark numbers: `bench_personal_vault` printed hardcoded metrics (0.94/0.88/0.00) and `bench_locomo` returned `retrieval@k = 1.0` for any non-empty fixture; both are now honest.
