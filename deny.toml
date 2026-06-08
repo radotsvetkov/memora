@@ -14,6 +14,10 @@ ignore = [
   # (RUSTSEC-2025-0141); they consider 1.3.3 feature-complete. Pulled
   # transitively (hnsw_rs). No vulnerability, no action needed.
   "RUSTSEC-2025-0141",
+  # `number_prefix` is unmaintained (RUSTSEC-2025-0119), pulled in only under the
+  # `local-embed` feature via the fastembed -> indicatif progress-bar tree. A
+  # tiny formatting helper with no security impact.
+  "RUSTSEC-2025-0119",
 ]
 
 [licenses]
@@ -34,6 +38,8 @@ allow = [
   "Unicode-DFS-2016",
   "Unlicense",
   "Zlib",
+  "0BSD",
+  "NCSA",
   "CDLA-Permissive-2.0",
 ]
 # Narrowly-scoped exceptions for two transitive weak-copyleft crates.
