@@ -7,6 +7,7 @@ pub mod claims;
 pub mod config;
 pub mod consolidate;
 pub mod embed;
+pub mod facade;
 pub mod index;
 pub mod indexer;
 pub mod learn;
@@ -33,6 +34,7 @@ pub use consolidate::{AtlasWriter, WorldMapWriter};
 pub use embed::{
     build_embedder, normalize_text, DeterministicEmbedder, Embedder, OllamaEmbedder, OpenAiEmbedder,
 };
+pub use facade::Memora;
 pub use index::{Index, IndexError, NoteRow, RebuildStats, VectorIndex};
 pub use learn::QValueLearner;
 pub use note::{Frontmatter, Note, NoteSource, ParseError, Privacy};

@@ -83,6 +83,20 @@ Memora makes one claim no funded memory vendor makes: post-generation, hash-reve
 
 Memora is behind on scale, integrations, multimodal ingestion, and ecosystem, and it would rather you knew. It is not here to replace your memory store. It is the local check that rejects what your AI cannot prove. See the full breakdown in [docs/comparison.md](docs/src/comparison.md).
 
+## Use it as a library
+
+Memora is embeddable. The owned `Memora` facade opens a vault and verifies citations from your own Rust code, with no lifetimes to thread through:
+
+```rust
+use memora_core::Memora;
+
+let memora = Memora::open("/path/to/vault")?;
+let answer = memora.validate("drift uses MessagePack [claim:0123456789abcdef].").await?;
+println!("{} verified, {} rejected", answer.verified_count, answer.unverified_count);
+```
+
+`validate` is pure verification: no network, no LLM. `search` and `claim` are also available. This is the surface a future agent SDK and a CI action will build on.
+
 ## Recommended models
 
 Memora makes two kinds of LLM calls. Extraction runs once per note and produces structured triples. Synthesis runs once per atlas and produces prose. Provider quality matters most for extraction.
@@ -161,7 +175,7 @@ Issues, edge cases, and design discussions are welcome on the [issue tracker](ht
 - PDF, web clipping, and transcript ingestion
 - A GUI for the claim graph and atlas review
 - Entailment scoring (today: provenance integrity only)
-- A stable embeddable SDK (today: CLI and MCP)
+- A published crates.io release (the embeddable `Memora` library facade exists today)
 
 ## Docs, contributing, license
 

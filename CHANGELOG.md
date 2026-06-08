@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Owned `Memora` library facade (`Memora::open`, `validate`, `search`, `claim`) so the engine is embeddable from other Rust code without touching the lifetime-borrowed internals. `memora-core` gained crates.io metadata (description, keywords, categories).
 - Supply-chain and contract gates in CI: `cargo-deny` (advisories, licenses, bans, sources) via `deny.toml`, plus the deterministic citation-rejection benchmark now runs in CI so a regression in the core guarantee fails the build.
 - `memora demo`: a zero-config, no-API-key, offline command that builds an ephemeral vault and runs the real validator over an AI answer containing every failure mode (verified, hallucinated id, misquote, post-edit hash mismatch, superseded), rendering a terminal verdict and an optional HTML "Proof Report" (`--open`).
 - Type-enforced redaction choke-point (`RedactedPayload`) at the LLM wire boundary: secret claim content cannot reach a cloud provider without passing through redaction, enforced across the challenger, answer, consolidate, contradiction, and extraction paths (forgetting to redact a new egress site is now a compile error).
