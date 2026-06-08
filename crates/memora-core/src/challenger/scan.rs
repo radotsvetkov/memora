@@ -300,11 +300,7 @@ impl<'a> Challenger<'a> {
                  \n\
                  GOOD example: 'When did the Q1 launch decision take effect?'\n\
                  BAD example: 'Is the note indicating that X has been initialized?'",
-                subject,
-                predicate,
-                object,
-                candidate.confidence,
-                candidate.predicate_occurrences,
+                subject, predicate, object, candidate.confidence, candidate.predicate_occurrences,
             );
             let secret_tokens = if redact {
                 let mut tokens = vec![candidate.subject.clone(), candidate.predicate.clone()];

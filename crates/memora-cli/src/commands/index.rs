@@ -7,7 +7,9 @@ use memora_core::indexer::{FrontmatterFixMode, Indexer};
 use memora_core::note::ParseError;
 
 use crate::config::AppConfig;
-use crate::runtime::{build_embedder_from_app, make_gated_client, open_index, open_vault, open_vector};
+use crate::runtime::{
+    build_embedder_from_app, make_gated_client, open_index, open_vault, open_vector,
+};
 
 #[derive(Debug, Args)]
 pub struct IndexArgs {

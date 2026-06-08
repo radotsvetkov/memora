@@ -59,7 +59,10 @@ impl Claim {
         let full = Self::compute_fingerprint(span_text);
         match stored.len() {
             len if len == full.len() => full == stored,
-            16 => full.get(..16).map(|prefix| prefix == stored).unwrap_or(false),
+            16 => full
+                .get(..16)
+                .map(|prefix| prefix == stored)
+                .unwrap_or(false),
             _ => false,
         }
     }

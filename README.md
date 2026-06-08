@@ -118,6 +118,23 @@ model = "nomic-embed-text"
 dim = 768
 ```
 
+## See it catch a hallucination in 10 seconds
+
+No vault, no API key, no network — `memora demo` builds an ephemeral vault, feeds the
+*real* validator an AI answer containing one of every kind of bad citation, and shows
+the verdict:
+
+```bash
+memora demo          # terminal verdict
+memora demo --open   # also opens an HTML "Proof Report"
+```
+
+You'll watch a verified citation pass (green), a hallucinated id, a misquote, and a
+post-edit hash mismatch get **rejected** (red, struck through), and a retracted claim
+get flagged **superseded** — then see the difference between what a naive tool would
+have shown you as fact and what memora actually returns. It's the same check
+`memora query` runs on every answer.
+
 ## Quickstart
 
 Install (cargo):

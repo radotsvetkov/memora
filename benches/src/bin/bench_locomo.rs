@@ -26,7 +26,10 @@ async fn main() -> Result<()> {
     // retrieval@k = 1.0 for any non-empty fixture; that has been removed.)
     // To actually score LoCoMo, build an index from the source corpus and run
     // the real retriever over each query, comparing against expected_note_id.
-    println!("LoCoMo subset rows: {} (fixture listing only; not scored)", rows.len());
+    println!(
+        "LoCoMo subset rows: {} (fixture listing only; not scored)",
+        rows.len()
+    );
     println!("queries:");
     for row in rows {
         println!("- {} => {}", row.query, row.expected_note_id);

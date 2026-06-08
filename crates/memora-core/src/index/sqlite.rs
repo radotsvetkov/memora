@@ -111,17 +111,32 @@ impl Index {
             }
         }
 
+        // Establish WAL mode once, on a single connection, BEFORE the pool opens
+        // many connections concurrently. Switching a brand-new db to WAL takes a
+        // brief exclusive lock; if the pool's eagerly-created connections all race
+        // that switch they fail with "database is locked" (logged via r2d2). Doing
+        // it once up front means every pooled connection opens an already-WAL db.
+        if db_path != Path::new(":memory:") {
+            let conn = rusqlite::Connection::open(db_path)?;
+            conn.execute_batch("PRAGMA busy_timeout=60000; PRAGMA journal_mode=WAL;")?;
+        }
+
         let manager = if db_path == Path::new(":memory:") {
             SqliteConnectionManager::memory()
         } else {
             SqliteConnectionManager::file(db_path)
         }
         .with_init(|conn| {
+            // busy_timeout MUST be set before journal_mode: switching a fresh db
+            // to WAL takes a lock, and with the default zero timeout the extra
+            // pooled connections r2d2 opens eagerly race and fail with "database
+            // is locked" (logged via r2d2). Setting the timeout first makes them
+            // wait for the switch instead of erroring.
             conn.execute_batch(
-                "PRAGMA journal_mode=WAL;\
+                "PRAGMA busy_timeout=60000;\
+                 PRAGMA journal_mode=WAL;\
                  PRAGMA foreign_keys=ON;\
-                 PRAGMA synchronous=NORMAL;\
-                 PRAGMA busy_timeout=60000;",
+                 PRAGMA synchronous=NORMAL;",
             )
         });
 

@@ -20,7 +20,7 @@ use chrono::{TimeZone, Utc};
 use tempfile::tempdir;
 
 use memora_core::{
-    Claim, CitationStatus, CitationValidator, ClaimStore, Frontmatter, Index, Note, NoteSource,
+    CitationStatus, CitationValidator, Claim, ClaimStore, Frontmatter, Index, Note, NoteSource,
     Privacy,
 };
 
@@ -52,15 +52,36 @@ async fn main() -> Result<()> {
     let body_a = "Rado works at HMC and leads Memora.";
     seed_note(&vault, &index, "a.md", "note-a", body_a)?;
     // Claim A1: a faithfully extracted fact (correct span + correct fingerprint).
-    let a1 = upsert_claim(&store, "0000000000000a01", "note-a", body_a, "Rado works at HMC", true)?;
+    let a1 = upsert_claim(
+        &store,
+        "0000000000000a01",
+        "note-a",
+        body_a,
+        "Rado works at HMC",
+        true,
+    )?;
     // Claim A2: a claim whose stored fingerprint no longer matches the source
     // span (simulates the note being edited after extraction).
-    let a2 = upsert_claim(&store, "0000000000000a02", "note-a", body_a, "leads Memora", false)?;
+    let a2 = upsert_claim(
+        &store,
+        "0000000000000a02",
+        "note-a",
+        body_a,
+        "leads Memora",
+        false,
+    )?;
 
     // --- Note B: a decision note. ---
     let body_b = "The launch deadline is March 15 for the EU region.";
     seed_note(&vault, &index, "b.md", "note-b", body_b)?;
-    let b1 = upsert_claim(&store, "0000000000000b01", "note-b", body_b, "The launch deadline is March 15", true)?;
+    let b1 = upsert_claim(
+        &store,
+        "0000000000000b01",
+        "note-b",
+        body_b,
+        "The launch deadline is March 15",
+        true,
+    )?;
 
     let validator = CitationValidator {
         store: &store,
@@ -283,7 +304,10 @@ fn upsert_claim(
 }
 
 fn claim_id_of(answer: &str) -> &str {
-    let start = answer.find("[claim:").map(|i| i + "[claim:".len()).unwrap_or(0);
+    let start = answer
+        .find("[claim:")
+        .map(|i| i + "[claim:".len())
+        .unwrap_or(0);
     &answer[start..start + 16]
 }
 

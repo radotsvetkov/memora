@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- `memora demo`: a zero-config, no-API-key, offline command that builds an ephemeral vault and runs the real validator over an AI answer containing every failure mode (verified, hallucinated id, misquote, post-edit hash mismatch, superseded), rendering a terminal verdict and an optional HTML "Proof Report" (`--open`).
 - Type-enforced redaction choke-point (`RedactedPayload`) at the LLM wire boundary: secret claim content cannot reach a cloud provider without passing through redaction, enforced across the challenger, answer, consolidate, contradiction, and extraction paths (forgetting to redact a new egress site is now a compile error).
 - `Superseded` citation status: a cited claim whose `valid_until` has expired is surfaced as superseded rather than asserted as current. Exposed via the validator, `CitedAnswer.superseded_count`, and MCP `memora_verify_claim` (`superseded` + `valid_until`).
 - Deterministic, no-API-key citation-rejection benchmark (`make bench` → `bench_citation_rejection`): measures fabricated-citation rejection rate and valid-citation preservation rate over a labeled fixture, exits non-zero on regression (CI gate for the core contract).
@@ -15,6 +16,7 @@
 - Repositioned README, docs, and landing page around verifiable citation rejection; dropped the "cognitive memory" framing; added an explicit "provenance integrity, not entailment" boundary; rewrote the comparison to confront Mem0/Zep/Letta/Cognee and the Anthropic Citations API honestly.
 
 ### Fixed
+- First-run `database is locked` noise: establish WAL mode on a single connection before the pool opens connections concurrently, so they don't race the journal-mode switch on a fresh db.
 - The challenger now routes all prompts through the privacy filter (it previously embedded raw secret claims and note spans into cloud prompts).
 - Removed fabricated placeholder benchmark numbers: `bench_personal_vault` printed hardcoded metrics (0.94/0.88/0.00) and `bench_locomo` returned `retrieval@k = 1.0` for any non-empty fixture; both are now honest.
 

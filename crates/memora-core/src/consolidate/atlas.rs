@@ -999,9 +999,7 @@ mod tests {
     use anyhow::Result;
     use async_trait::async_trait;
     use chrono::{TimeZone, Utc};
-    use memora_llm::{
-        CompletionResponse, LlmClient, LlmDestination, LlmError, RedactedPayload,
-    };
+    use memora_llm::{CompletionResponse, LlmClient, LlmDestination, LlmError, RedactedPayload};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use tempfile::tempdir;

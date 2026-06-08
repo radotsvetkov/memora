@@ -482,9 +482,7 @@ mod tests {
     use anyhow::Result;
     use async_trait::async_trait;
     use chrono::{TimeZone, Utc};
-    use memora_llm::{
-        CompletionResponse, LlmClient, LlmDestination, LlmError, RedactedPayload,
-    };
+    use memora_llm::{CompletionResponse, LlmClient, LlmDestination, LlmError, RedactedPayload};
     use tempfile::tempdir;
 
     use crate::claims::{Claim, ClaimStore};
@@ -548,10 +546,7 @@ mod tests {
 
     #[async_trait]
     impl LlmClient for PanicWorldOverviewLlm {
-        async fn complete(
-            &self,
-            payload: RedactedPayload,
-        ) -> Result<CompletionResponse, LlmError> {
+        async fn complete(&self, payload: RedactedPayload) -> Result<CompletionResponse, LlmError> {
             let req = payload.into_request();
             if req
                 .system

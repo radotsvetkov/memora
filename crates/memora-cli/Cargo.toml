@@ -44,6 +44,7 @@ memora-core = { path = "../memora-core" }
 memora-llm = { path = "../memora-llm" }
 memora-mcp = { path = "../memora-mcp" }
 rmcp = { version = "0.1", features = ["transport-io"] }
+tempfile.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
