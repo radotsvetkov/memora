@@ -130,11 +130,113 @@ pub enum LlmProvider {
     Ollama,
 }
 
+/// Token substituted for any secret content scrubbed before a cloud LLM call.
+pub const REDACTION_PLACEHOLDER: &str = "[redacted]";
+
+/// A [`CompletionRequest`] that has passed through destination-appropriate
+/// privacy redaction.
+///
+/// [`LlmClient::complete`] accepts **only** this type, so there is no way to
+/// reach a provider without first deciding how to redact. This turns "a new
+/// egress site forgot to redact" from a silent privacy leak into a compile
+/// error: the call simply will not type-check without a `RedactedPayload`, and
+/// the only constructors either mark the request local (never leaves the
+/// device) or scrub the supplied secret tokens for the cloud.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RedactedPayload {
+    request: CompletionRequest,
+    destination: LlmDestination,
+}
+
+impl RedactedPayload {
+    /// Wrap a request bound for a **local** endpoint. The prompt never leaves
+    /// the device, so nothing is scrubbed.
+    pub fn local(request: CompletionRequest) -> Self {
+        Self {
+            request,
+            destination: LlmDestination::Local,
+        }
+    }
+
+    /// Wrap a request bound for a **cloud** endpoint, scrubbing every occurrence
+    /// of each non-empty `secret` token from the system prompt and all message
+    /// bodies, replacing it with [`REDACTION_PLACEHOLDER`].
+    pub fn redacted_for_cloud(mut request: CompletionRequest, secrets: &[String]) -> Self {
+        scrub_request(&mut request, secrets);
+        Self {
+            request,
+            destination: LlmDestination::CloudKnown,
+        }
+    }
+
+    /// Build a payload for `destination`: a local destination passes through
+    /// untouched; any cloud destination scrubs `secrets`.
+    ///
+    /// Prefer [`LlmClient::redact`], which binds `destination` to the actual
+    /// client so a caller cannot accidentally mark a cloud request as local.
+    pub fn for_destination(
+        request: CompletionRequest,
+        destination: LlmDestination,
+        secrets: &[String],
+    ) -> Self {
+        match destination {
+            LlmDestination::Local => Self::local(request),
+            LlmDestination::CloudKnown | LlmDestination::CloudUnknown => {
+                let mut request = request;
+                scrub_request(&mut request, secrets);
+                Self {
+                    request,
+                    destination,
+                }
+            }
+        }
+    }
+
+    /// The wrapped request (read-only). Provider impls unwrap this to serialize.
+    pub fn request(&self) -> &CompletionRequest {
+        &self.request
+    }
+
+    /// Consume the payload, returning the wrapped request.
+    pub fn into_request(self) -> CompletionRequest {
+        self.request
+    }
+
+    /// Destination this payload was redacted for.
+    pub fn destination(&self) -> LlmDestination {
+        self.destination
+    }
+}
+
+fn scrub_request(request: &mut CompletionRequest, secrets: &[String]) {
+    let needles = secrets
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    if needles.is_empty() {
+        return;
+    }
+    if let Some(system) = request.system.as_mut() {
+        for needle in &needles {
+            *system = system.replace(needle, REDACTION_PLACEHOLDER);
+        }
+    }
+    for message in &mut request.messages {
+        for needle in &needles {
+            message.content = message.content.replace(needle, REDACTION_PLACEHOLDER);
+        }
+    }
+}
+
 /// Unified trait implemented by all provider clients.
 #[async_trait]
 pub trait LlmClient: Send + Sync {
     /// Execute a single completion request.
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, LlmError>;
+    ///
+    /// The wire boundary accepts only a [`RedactedPayload`] so that every cloud
+    /// egress must first pass through redaction (see [`LlmClient::redact`]).
+    async fn complete(&self, payload: RedactedPayload) -> Result<CompletionResponse, LlmError>;
 
     /// Return the default model configured for this client.
     fn model_name(&self) -> &str;
@@ -142,7 +244,19 @@ pub trait LlmClient: Send + Sync {
     /// Return where this client sends prompts.
     fn destination(&self) -> LlmDestination;
 
+    /// Wrap `request` into a [`RedactedPayload`] for this client's destination,
+    /// scrubbing `secrets` when the destination is a cloud endpoint. Pass an
+    /// empty slice when the prompt is already known to contain no secret
+    /// content.
+    fn redact(&self, request: CompletionRequest, secrets: &[String]) -> RedactedPayload {
+        RedactedPayload::for_destination(request, self.destination(), secrets)
+    }
+
     /// Structured JSON output (`json_mode`); passes `schema_hint` as optional system instruction.
+    ///
+    /// Callers that may embed secret content must scrub it before calling this
+    /// helper (it has no token list to redact). The payload is still routed
+    /// through [`LlmClient::redact`] so the destination binding is enforced.
     async fn chat_json(
         &self,
         prompt: &str,
@@ -150,8 +264,8 @@ pub trait LlmClient: Send + Sync {
         max_tokens: u32,
         temperature: f32,
     ) -> Result<String, LlmError> {
-        let resp = self
-            .complete(CompletionRequest {
+        let payload = self.redact(
+            CompletionRequest {
                 model: None,
                 system: schema_hint.map(|s| s.to_string()),
                 messages: vec![Message {
@@ -161,8 +275,10 @@ pub trait LlmClient: Send + Sync {
                 max_tokens,
                 temperature,
                 json_mode: true,
-            })
-            .await?;
+            },
+            &[],
+        );
+        let resp = self.complete(payload).await?;
         Ok(resp.text)
     }
 }

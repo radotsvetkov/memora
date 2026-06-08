@@ -1,10 +1,9 @@
 use anyhow::Result;
 use clap::Args;
 use memora_core::{Challenger, ChallengerConfig, ClaimStore};
-use memora_llm::{make_client, LlmProvider};
 
 use crate::config::AppConfig;
-use crate::runtime::open_index;
+use crate::runtime::{make_gated_client, open_index};
 
 #[derive(Debug, Args)]
 pub struct ChallengeArgs {
@@ -18,23 +17,16 @@ pub async fn run(args: ChallengeArgs) -> Result<()> {
     let cfg = AppConfig::load(&args.vault)?;
     let index = open_index(&args.vault)?;
     let claim_store = ClaimStore::new(&index);
-    let provider = match cfg.llm.provider.as_str() {
-        "anthropic" => LlmProvider::Anthropic,
-        "openai" => LlmProvider::OpenAi,
-        _ => LlmProvider::Ollama,
-    };
-    let llm = make_client(
-        provider,
-        cfg.llm.model.clone(),
-        cfg.llm.endpoint.clone(),
-        cfg.llm.embedding_model.clone(),
-    )?;
+    let llm = make_gated_client(&cfg.llm)?;
     let challenger = Challenger {
         db: &index,
         claim_store: &claim_store,
         llm: llm.as_ref(),
         vault: &args.vault,
-        config: ChallengerConfig::default(),
+        config: ChallengerConfig {
+            redact_secret_in_cloud: cfg.privacy.redact_secret_in_cloud,
+            ..ChallengerConfig::default()
+        },
     };
 
     let report = challenger.run_once().await?;

@@ -4,6 +4,7 @@ use tracing::debug;
 
 use crate::client::{
     shared_http_client, CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError,
+    RedactedPayload,
 };
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -72,7 +73,8 @@ impl OpenAiClient {
 
 #[async_trait::async_trait]
 impl LlmClient for OpenAiClient {
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, payload: RedactedPayload) -> Result<CompletionResponse, LlmError> {
+        let req = payload.into_request();
         let model = req.model.clone().unwrap_or_else(|| self.model.clone());
         let mut messages = Self::with_system(&req);
         if req.json_mode {
@@ -239,7 +241,7 @@ mod tests {
 
         let client = OpenAiClient::new(None).expect("client should construct");
         let out = client
-            .complete(make_request(false, Some("you are concise")))
+            .complete(client.redact(make_request(false, Some("you are concise")), &[]))
             .await
             .expect("request should succeed");
 
@@ -263,7 +265,7 @@ mod tests {
 
         let client = OpenAiClient::new(None).expect("client should construct");
         let err = client
-            .complete(make_request(false, None))
+            .complete(client.redact(make_request(false, None), &[]))
             .await
             .expect_err("request should fail");
         assert!(matches!(err, LlmError::RateLimited));
@@ -284,7 +286,7 @@ mod tests {
 
         let client = OpenAiClient::new(None).expect("client should construct");
         let err = client
-            .complete(make_request(false, None))
+            .complete(client.redact(make_request(false, None), &[]))
             .await
             .expect_err("request should fail");
         assert!(matches!(err, LlmError::ServerError(500, body) if body == "openai overloaded"));
@@ -312,7 +314,7 @@ mod tests {
 
         let client = OpenAiClient::new(None).expect("client should construct");
         let _ = client
-            .complete(make_request(true, Some("be strict")))
+            .complete(client.redact(make_request(true, Some("be strict")), &[]))
             .await
             .expect("request should succeed");
     }

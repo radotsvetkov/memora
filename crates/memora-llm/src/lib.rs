@@ -7,6 +7,6 @@ pub mod openai;
 
 pub use client::{
     make_client, CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError,
-    LlmProvider, Message, Role,
+    LlmProvider, Message, RedactedPayload, Role, REDACTION_PLACEHOLDER,
 };
 pub use ollama::OllamaClient;

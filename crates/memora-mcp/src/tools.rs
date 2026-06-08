@@ -495,11 +495,19 @@ impl MemoraRuntime {
             .map(ToString::to_string);
         let span_intact = current_text
             .as_deref()
-            .map(|text| memora_core::Claim::compute_fingerprint(text) == claim.span_fingerprint)
+            .map(|text| memora_core::Claim::fingerprint_matches(text, &claim.span_fingerprint))
+            .unwrap_or(false);
+        // A claim with an expired `valid_until` is superseded/retracted: its
+        // provenance can be intact while the fact is no longer current.
+        let superseded = claim
+            .valid_until
+            .map(|valid_until| valid_until <= chrono::Utc::now())
             .unwrap_or(false);
         Ok(json!({
             "exists": true,
             "span_intact": span_intact,
+            "superseded": superseded,
+            "valid_until": claim.valid_until.map(|dt| dt.to_rfc3339()),
             "current_text": current_text
         }))
     }
@@ -559,7 +567,10 @@ impl MemoraRuntime {
             claim_store: &store,
             llm: llm.as_ref(),
             vault: &self.vault_root,
-            config: memora_core::ChallengerConfig::default(),
+            config: memora_core::ChallengerConfig {
+                redact_secret_in_cloud: self.privacy_config().redact_secret_in_cloud,
+                ..memora_core::ChallengerConfig::default()
+            },
         };
         Ok(serde_json::to_value(challenger.run_once().await?)?)
     }
@@ -625,6 +636,7 @@ fn serialize_cited_answer(answer: memora_core::CitedAnswer) -> Value {
         "verified_count": answer.verified_count,
         "unverified_count": answer.unverified_count,
         "mismatch_count": answer.mismatch_count,
+        "superseded_count": answer.superseded_count,
         "redacted_count": answer.redacted_count,
         "degraded": answer.degraded
     })
@@ -636,6 +648,7 @@ fn citation_status_to_str(status: CitationStatus) -> &'static str {
         CitationStatus::Unverified => "unverified",
         CitationStatus::FingerprintMismatch => "fingerprint_mismatch",
         CitationStatus::QuoteMismatch => "quote_mismatch",
+        CitationStatus::Superseded => "superseded",
     }
 }
 

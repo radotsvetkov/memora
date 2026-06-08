@@ -54,25 +54,34 @@ impl<'a> AnsweringPipeline<'a> {
         }
 
         let prompt_context = format_claim_context(&redacted);
+        // `redacted` already replaced secret triples with placeholders; this is
+        // the defense-in-depth scrub list for the wire boundary in case a raw
+        // token leaked into the prompt some other way.
+        let secret_tokens = self.privacy_filter.secret_tokens(&ranked_claims);
         let llm = self
             .llm
             .ok_or_else(|| anyhow::anyhow!("LLM client required for cited answer generation"))?;
         let response = llm
-            .complete(CompletionRequest {
-                model: None,
-                system: Some(ANSWER_SYSTEM_PROMPT.to_string()),
-                messages: vec![Message {
-                    role: Role::User,
-                    content: format!("{prompt_context}\n\nQuestion: {query}"),
-                }],
-                max_tokens: 1_200,
-                temperature: 0.1,
-                json_mode: false,
-            })
+            .complete(llm.redact(
+                CompletionRequest {
+                    model: None,
+                    system: Some(ANSWER_SYSTEM_PROMPT.to_string()),
+                    messages: vec![Message {
+                        role: Role::User,
+                        content: format!("{prompt_context}\n\nQuestion: {query}"),
+                    }],
+                    max_tokens: 1_200,
+                    temperature: 0.1,
+                    json_mode: false,
+                },
+                &secret_tokens,
+            ))
             .await?;
         let mut cited = self.validator.validate(&response.text).await?;
         cited.redacted_count = stats.redacted;
-        if cited.verified_count > 0 && cited.unverified_count + cited.mismatch_count == 0 {
+        if cited.verified_count > 0
+            && cited.unverified_count + cited.mismatch_count + cited.superseded_count == 0
+        {
             return Ok(cited);
         }
 
@@ -91,22 +100,29 @@ impl<'a> AnsweringPipeline<'a> {
                 allowed_ids.join(", ")
             );
             let retry = llm
-                .complete(CompletionRequest {
-                    model: None,
-                    system: Some(retry_system),
-                    messages: vec![Message {
-                        role: Role::User,
-                        content: format!("{prompt_context}\n\nQuestion: {query}"),
-                    }],
-                    max_tokens: 1_200,
-                    temperature: 0.0,
-                    json_mode: false,
-                })
+                .complete(llm.redact(
+                    CompletionRequest {
+                        model: None,
+                        system: Some(retry_system),
+                        messages: vec![Message {
+                            role: Role::User,
+                            content: format!("{prompt_context}\n\nQuestion: {query}"),
+                        }],
+                        max_tokens: 1_200,
+                        temperature: 0.0,
+                        json_mode: false,
+                    },
+                    &secret_tokens,
+                ))
                 .await?;
             let mut cited_retry = self.validator.validate(&retry.text).await?;
             cited_retry.redacted_count = stats.redacted;
             if cited_retry.verified_count > 0 {
-                if cited_retry.unverified_count + cited_retry.mismatch_count > 0 {
+                if cited_retry.unverified_count
+                    + cited_retry.mismatch_count
+                    + cited_retry.superseded_count
+                    > 0
+                {
                     cited_retry.degraded = true;
                 }
                 return Ok(cited_retry);
@@ -194,6 +210,7 @@ fn empty_claims_answer() -> CitedAnswer {
         verified_count: 0,
         unverified_count: 0,
         mismatch_count: 0,
+        superseded_count: 0,
         redacted_count: 0,
         degraded: true,
     }

@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use memora_llm::{CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError};
+use memora_llm::{CompletionResponse, LlmClient, LlmDestination, LlmError, RedactedPayload};
 
 pub struct MockExtractorLlm {
     pub canned_response: String,
@@ -9,7 +9,7 @@ pub struct MockExtractorLlm {
 
 #[async_trait]
 impl LlmClient for MockExtractorLlm {
-    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, _payload: RedactedPayload) -> Result<CompletionResponse, LlmError> {
         Ok(CompletionResponse {
             text: self.canned_response.clone(),
             model: "mock/extractor".to_string(),
@@ -42,7 +42,7 @@ impl MockSequentialExtractorLlm {
 
 #[async_trait]
 impl LlmClient for MockSequentialExtractorLlm {
-    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, _payload: RedactedPayload) -> Result<CompletionResponse, LlmError> {
         let mut guard = self.responses.lock().unwrap_or_else(|e| e.into_inner());
         let text = guard.remove(0);
         Ok(CompletionResponse {

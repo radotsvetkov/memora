@@ -5,10 +5,9 @@ use clap::{Args, Subcommand};
 use memora_core::claims::{ClaimExtractor, ClaimStore};
 use memora_core::note;
 use memora_core::resolve_note_path;
-use memora_llm::{make_client, LlmProvider};
 
 use crate::config::AppConfig;
-use crate::runtime::open_index;
+use crate::runtime::{make_gated_client, open_index};
 
 #[derive(Debug, Subcommand)]
 pub enum ClaimsCommand {
@@ -44,17 +43,7 @@ pub async fn run(cmd: ClaimsCommand) -> Result<()> {
 
 async fn run_extract(args: ClaimsExtractArgs) -> Result<()> {
     let cfg = AppConfig::load(&args.vault)?;
-    let provider = match cfg.llm.provider.as_str() {
-        "anthropic" => LlmProvider::Anthropic,
-        "openai" => LlmProvider::OpenAi,
-        _ => LlmProvider::Ollama,
-    };
-    let llm = make_client(
-        provider,
-        cfg.llm.model.clone(),
-        cfg.llm.endpoint.clone(),
-        cfg.llm.embedding_model.clone(),
-    )?;
+    let llm = make_gated_client(&cfg.llm)?;
     let index = open_index(&args.vault)?;
     let store = ClaimStore::new(&index);
     let row = index

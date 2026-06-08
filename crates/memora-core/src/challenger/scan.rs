@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use chrono::Utc;
-use memora_llm::{CompletionRequest, LlmClient, Message, Role};
+use memora_llm::{CompletionRequest, LlmClient, Message, Role, REDACTION_PLACEHOLDER};
 use rusqlite::params;
 use serde::Deserialize;
 
@@ -13,6 +13,8 @@ use crate::challenger::report::{
 };
 use crate::claims::{Claim, ClaimStore};
 use crate::index::Index;
+use crate::note::Privacy;
+use crate::privacy::PrivacyFilter;
 
 pub struct Challenger<'a> {
     pub db: &'a Index,
@@ -28,6 +30,10 @@ pub struct ChallengerConfig {
     pub gap_limit: usize,
     pub cross_region_min: usize,
     pub low_confidence_threshold: f32,
+    /// Redact Secret claim content before any cloud LLM call. Mirrors
+    /// `PrivacyConfig::redact_secret_in_cloud`; defaults to `true` so the safe
+    /// behavior holds even when a caller forgets to wire the user's config.
+    pub redact_secret_in_cloud: bool,
 }
 
 impl Default for ChallengerConfig {
@@ -37,6 +43,7 @@ impl Default for ChallengerConfig {
             gap_limit: 20,
             cross_region_min: 3,
             low_confidence_threshold: 0.5,
+            redact_secret_in_cloud: true,
         }
     }
 }
@@ -71,6 +78,7 @@ struct FrontierCandidate {
     object: Option<String>,
     confidence: f32,
     predicate_occurrences: usize,
+    privacy: Privacy,
 }
 
 impl<'a> Challenger<'a> {
@@ -96,36 +104,53 @@ impl<'a> Challenger<'a> {
         Ok(())
     }
 
+    /// Privacy filter bound to this challenger's actual LLM destination. Every
+    /// prompt this struct sends to the cloud is routed through it so Secret
+    /// claim content (and the raw note spans behind it) never leaves the device.
+    fn privacy_filter(&self) -> PrivacyFilter {
+        PrivacyFilter::from_destination(self.llm.destination(), self.config.redact_secret_in_cloud)
+    }
+
     async fn stale_review(&self, generated_at: chrono::DateTime<Utc>) -> Result<Vec<StaleAlert>> {
         let stale_ids = self.stale_claim_ids(self.config.stale_limit)?;
+        let filter = self.privacy_filter();
         let mut alerts = Vec::new();
         for claim_id in stale_ids {
             let Some(claim) = self.claim_store.get(&claim_id)? else {
                 continue;
             };
-            let span_text = self.read_span_text(&claim).await.unwrap_or_default();
+            // For a Secret claim bound for the cloud, never read the raw note
+            // span and never echo its triple — both are sensitive.
+            let redact = filter.should_redact(claim.privacy);
+            let span_text = if redact {
+                String::new()
+            } else {
+                self.read_span_text(&claim).await.unwrap_or_default()
+            };
+            let (subject, predicate, object) = prompt_triple(&claim, redact);
             let prompt = format!(
                 "Given the source note has changed, propose:\n\
                  (1) the updated claim, OR (2) 'archive' if no longer applicable.\n\
-                 Source: '{span_text}'. Old claim: '{} {} {}'.\n\
+                 Source: '{span_text}'. Old claim: '{subject} {predicate} {object}'.\n\
                  Output JSON {{\"action\":\"update\"|\"archive\",\"new_claim\"?:{{\"s\":\"...\",\"p\":\"...\",\"o\":\"...\"}}}}",
-                claim.subject,
-                claim.predicate,
-                claim.object_display()
             );
+            let secret_tokens = filter.secret_tokens(std::slice::from_ref(&claim));
             let response = self
                 .llm
-                .complete(CompletionRequest {
-                    model: None,
-                    system: None,
-                    messages: vec![Message {
-                        role: Role::User,
-                        content: prompt,
-                    }],
-                    max_tokens: 160,
-                    temperature: 0.0,
-                    json_mode: true,
-                })
+                .complete(self.llm.redact(
+                    CompletionRequest {
+                        model: None,
+                        system: None,
+                        messages: vec![Message {
+                            role: Role::User,
+                            content: prompt,
+                        }],
+                        max_tokens: 160,
+                        temperature: 0.0,
+                        json_mode: true,
+                    },
+                    &secret_tokens,
+                ))
                 .await?;
             let proposal =
                 serde_json::from_str::<StaleProposal>(&response.text).unwrap_or(StaleProposal {
@@ -167,32 +192,35 @@ impl<'a> Challenger<'a> {
         &self,
         generated_at: chrono::DateTime<Utc>,
     ) -> Result<Vec<ContradictionAlert>> {
+        let filter = self.privacy_filter();
         let mut alerts = Vec::new();
         for (left, right) in self.claim_store.contradictions_unack()? {
+            let (left_s, left_p, left_o) = prompt_triple(&left, filter.should_redact(left.privacy));
+            let (right_s, right_p, right_o) =
+                prompt_triple(&right, filter.should_redact(right.privacy));
             let summary_prompt = format!(
                 "Summarize this contradiction in one sentence.\n\
-                 Claim A: '{} {} {}'\n\
-                 Claim B: '{} {} {}'",
-                left.subject,
-                left.predicate,
-                left.object_display(),
-                right.subject,
-                right.predicate,
-                right.object_display()
+                 Claim A: '{left_s} {left_p} {left_o}'\n\
+                 Claim B: '{right_s} {right_p} {right_o}'",
             );
+            let mut secret_tokens = filter.secret_tokens(std::slice::from_ref(&left));
+            secret_tokens.extend(filter.secret_tokens(std::slice::from_ref(&right)));
             let summary = self
                 .llm
-                .complete(CompletionRequest {
-                    model: None,
-                    system: None,
-                    messages: vec![Message {
-                        role: Role::User,
-                        content: summary_prompt,
-                    }],
-                    max_tokens: 80,
-                    temperature: 0.0,
-                    json_mode: false,
-                })
+                .complete(self.llm.redact(
+                    CompletionRequest {
+                        model: None,
+                        system: None,
+                        messages: vec![Message {
+                            role: Role::User,
+                            content: summary_prompt,
+                        }],
+                        max_tokens: 80,
+                        temperature: 0.0,
+                        json_mode: false,
+                    },
+                    &secret_tokens,
+                ))
                 .await?
                 .text
                 .trim()
@@ -247,8 +275,20 @@ impl<'a> Challenger<'a> {
         generated_at: chrono::DateTime<Utc>,
     ) -> Result<Vec<FrontierAlert>> {
         let candidates = self.frontier_candidates()?;
+        let filter = self.privacy_filter();
         let mut alerts = Vec::new();
         for candidate in candidates {
+            let redact = filter.should_redact(candidate.privacy);
+            let (subject, predicate) = if redact {
+                (REDACTION_PLACEHOLDER, REDACTION_PLACEHOLDER)
+            } else {
+                (candidate.subject.as_str(), candidate.predicate.as_str())
+            };
+            let object = if redact {
+                REDACTION_PLACEHOLDER
+            } else {
+                candidate.object.as_deref().unwrap_or("(unary)")
+            };
             let question_prompt = format!(
                 "A vault has this single uncertain claim: subject={}, predicate={}, \
                  object={} (confidence={:.2}, predicate appears in {} other claims).\n\
@@ -260,25 +300,37 @@ impl<'a> Challenger<'a> {
                  \n\
                  GOOD example: 'When did the Q1 launch decision take effect?'\n\
                  BAD example: 'Is the note indicating that X has been initialized?'",
-                candidate.subject,
-                candidate.predicate,
-                candidate.object.as_deref().unwrap_or("(unary)"),
+                subject,
+                predicate,
+                object,
                 candidate.confidence,
                 candidate.predicate_occurrences,
             );
+            let secret_tokens = if redact {
+                let mut tokens = vec![candidate.subject.clone(), candidate.predicate.clone()];
+                if let Some(object) = &candidate.object {
+                    tokens.push(object.clone());
+                }
+                tokens
+            } else {
+                Vec::new()
+            };
             let question = self
                 .llm
-                .complete(CompletionRequest {
-                    model: None,
-                    system: None,
-                    messages: vec![Message {
-                        role: Role::User,
-                        content: question_prompt,
-                    }],
-                    max_tokens: 80,
-                    temperature: 0.1,
-                    json_mode: false,
-                })
+                .complete(self.llm.redact(
+                    CompletionRequest {
+                        model: None,
+                        system: None,
+                        messages: vec![Message {
+                            role: Role::User,
+                            content: question_prompt,
+                        }],
+                        max_tokens: 80,
+                        temperature: 0.1,
+                        json_mode: false,
+                    },
+                    &secret_tokens,
+                ))
                 .await?
                 .text
                 .trim()
@@ -368,7 +420,7 @@ impl<'a> Challenger<'a> {
         let conn = self.db.pool.get()?;
         let gap_limit = i64::try_from(self.config.gap_limit)?;
         let mut stmt = conn.prepare(
-            "SELECT c.id, c.note_id, c.subject, c.predicate, c.object, c.confidence,
+            "SELECT c.id, c.note_id, c.subject, c.predicate, c.object, c.confidence, c.privacy,
                     (
                         SELECT COUNT(*)
                         FROM claims p
@@ -392,9 +444,20 @@ impl<'a> Challenger<'a> {
         let rows = stmt.query_map(
             params![self.config.low_confidence_threshold, gap_limit],
             |row| {
-                let predicate_count_raw: i64 = row.get(6)?;
+                let predicate_count_raw: i64 = row.get(7)?;
                 let predicate_occurrences = usize::try_from(predicate_count_raw).map_err(|_| {
-                    rusqlite::Error::IntegralValueOutOfRange(6, predicate_count_raw)
+                    rusqlite::Error::IntegralValueOutOfRange(7, predicate_count_raw)
+                })?;
+                let privacy_raw: String = row.get(6)?;
+                let privacy = privacy_raw.parse::<Privacy>().map_err(|_| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        6,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "invalid privacy",
+                        )),
+                    )
                 })?;
                 Ok(FrontierCandidate {
                     claim_id: row.get(0)?,
@@ -404,6 +467,7 @@ impl<'a> Challenger<'a> {
                     object: row.get::<_, Option<String>>(4)?,
                     confidence: row.get(5)?,
                     predicate_occurrences,
+                    privacy,
                 })
             },
         )?;
@@ -552,6 +616,25 @@ fn replace_review_section(content: &str, replacement: &str) -> String {
     }
     out.push_str(replacement);
     out
+}
+
+/// The (subject, predicate, object) strings to put in a prompt for `claim`.
+/// When `redact` is set the triple is replaced wholesale with the redaction
+/// placeholder so no Secret content reaches a cloud model.
+fn prompt_triple(claim: &Claim, redact: bool) -> (String, String, String) {
+    if redact {
+        (
+            REDACTION_PLACEHOLDER.to_string(),
+            REDACTION_PLACEHOLDER.to_string(),
+            REDACTION_PLACEHOLDER.to_string(),
+        )
+    } else {
+        (
+            claim.subject.clone(),
+            claim.predicate.clone(),
+            claim.object_display().to_string(),
+        )
+    }
 }
 
 fn slugify(subject: &str) -> String {

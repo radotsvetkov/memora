@@ -4,10 +4,12 @@ use memora_core::answer::AnsweringPipeline;
 use memora_core::cite::CitationValidator;
 use memora_core::claims::ClaimStore;
 use memora_core::{HybridRetriever, PrivacyFilter};
-use memora_llm::{make_client, LlmProvider};
 
 use crate::config::AppConfig;
-use crate::runtime::{build_embedder_from_app, open_index, open_vector, privacy_config_from_app};
+use crate::runtime::{
+    build_embedder_from_app, make_gated_client, open_index, open_vector, privacy_config_from_app,
+    provider_from_config,
+};
 
 #[derive(Debug, Args)]
 pub struct QueryArgs {
@@ -50,14 +52,9 @@ pub async fn run(args: QueryArgs) -> Result<()> {
         return Ok(());
     }
 
-    let llm = make_client(
-        provider_from_string(&cfg.llm.provider),
-        cfg.llm.model.clone(),
-        cfg.llm.endpoint.clone(),
-        cfg.llm.embedding_model.clone(),
-    )?;
+    let llm = make_gated_client(&cfg.llm)?;
     let privacy_config = privacy_config_from_app(&cfg);
-    let provider = provider_from_string(&cfg.llm.provider);
+    let provider = provider_from_config(&cfg.llm);
     let pipeline = AnsweringPipeline {
         retriever: &retriever,
         claim_store: &store,
@@ -73,12 +70,4 @@ pub async fn run(args: QueryArgs) -> Result<()> {
         answer.verified_count, answer.unverified_count, answer.mismatch_count
     );
     Ok(())
-}
-
-fn provider_from_string(raw: &str) -> LlmProvider {
-    match raw {
-        "anthropic" => LlmProvider::Anthropic,
-        "openai" => LlmProvider::OpenAi,
-        _ => LlmProvider::Ollama,
-    }
 }

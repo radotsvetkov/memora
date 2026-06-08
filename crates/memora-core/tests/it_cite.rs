@@ -13,6 +13,7 @@ use memora_core::note::{Frontmatter, Note, NoteSource, Privacy};
 use memora_core::{Embedder, HybridRetriever, Index, PrivacyConfig, PrivacyFilter, VectorIndex};
 use memora_llm::{
     CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError, LlmProvider,
+    RedactedPayload,
 };
 use tempfile::tempdir;
 
@@ -97,7 +98,8 @@ impl MockLlm {
 
 #[async_trait]
 impl LlmClient for MockLlm {
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, payload: RedactedPayload) -> Result<CompletionResponse, LlmError> {
+        let req = payload.into_request();
         self.requests
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())

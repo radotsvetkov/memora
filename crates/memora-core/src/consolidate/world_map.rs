@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use chrono::Utc;
-use memora_llm::{CompletionRequest, LlmClient, Message, Role};
+use memora_llm::{CompletionRequest, LlmClient, LlmDestination, Message, Role};
 use rusqlite::params;
 
 use crate::challenger::{
@@ -35,6 +35,10 @@ struct RegionStats {
 impl<'a> WorldMapWriter<'a> {
     pub async fn rebuild(&self) -> Result<()> {
         let regions = self.regions()?;
+        // Secret claim triples that must never reach a cloud model. Empty for a
+        // local destination; passed to the wire boundary as a scrub list on
+        // every consolidation prompt below.
+        let secret_tokens = self.secret_claim_tokens()?;
         let mut descriptions = BTreeMap::<String, String>::new();
         let mut stats = BTreeMap::<String, RegionStats>::new();
         let mut total_claims = 0usize;
@@ -47,7 +51,8 @@ impl<'a> WorldMapWriter<'a> {
             let description = if region_stats.claim_count < 3 || region == "default" {
                 "General notes (uncategorized)".to_string()
             } else {
-                self.region_description(region, &subjects).await?
+                self.region_description(region, &subjects, &secret_tokens)
+                    .await?
             };
             descriptions.insert(region.clone(), description);
         }
@@ -55,7 +60,7 @@ impl<'a> WorldMapWriter<'a> {
         let overview = if total_claims < 10 {
             WORLD_MAP_EARLY_STAGES_FALLBACK.to_string()
         } else {
-            self.overview(&descriptions, &stats).await?
+            self.overview(&descriptions, &stats, &secret_tokens).await?
         };
         let all_claims = self.current_claims_all_regions()?;
         let note_regions = self.note_region_map()?;
@@ -166,20 +171,31 @@ impl<'a> WorldMapWriter<'a> {
         Ok(out)
     }
 
-    async fn region_description(&self, region: &str, subjects: &[String]) -> Result<String> {
+    async fn region_description(
+        &self,
+        region: &str,
+        subjects: &[String],
+        secret_tokens: &[String],
+    ) -> Result<String> {
         let response = self
             .llm
-            .complete(CompletionRequest {
-                model: None,
-                system: Some(REGION_DESCRIPTION_PROMPT.to_string()),
-                messages: vec![Message {
-                    role: Role::User,
-                    content: format!("Region: {region}\nSample subjects: {}", subjects.join(", ")),
-                }],
-                max_tokens: 80,
-                temperature: 0.1,
-                json_mode: false,
-            })
+            .complete(self.llm.redact(
+                CompletionRequest {
+                    model: None,
+                    system: Some(REGION_DESCRIPTION_PROMPT.to_string()),
+                    messages: vec![Message {
+                        role: Role::User,
+                        content: format!(
+                            "Region: {region}\nSample subjects: {}",
+                            subjects.join(", ")
+                        ),
+                    }],
+                    max_tokens: 80,
+                    temperature: 0.1,
+                    json_mode: false,
+                },
+                secret_tokens,
+            ))
             .await?;
         Ok(response.text.trim().replace('\n', " "))
     }
@@ -188,6 +204,7 @@ impl<'a> WorldMapWriter<'a> {
         &self,
         descriptions: &BTreeMap<String, String>,
         stats: &BTreeMap<String, RegionStats>,
+        secret_tokens: &[String],
     ) -> Result<String> {
         let lines = descriptions
             .iter()
@@ -202,19 +219,54 @@ impl<'a> WorldMapWriter<'a> {
             .join("\n");
         let response = self
             .llm
-            .complete(CompletionRequest {
-                model: None,
-                system: Some(WORLD_MAP_PROMPT.to_string()),
-                messages: vec![Message {
-                    role: Role::User,
-                    content: lines,
-                }],
-                max_tokens: 300,
-                temperature: 0.1,
-                json_mode: false,
-            })
+            .complete(self.llm.redact(
+                CompletionRequest {
+                    model: None,
+                    system: Some(WORLD_MAP_PROMPT.to_string()),
+                    messages: vec![Message {
+                        role: Role::User,
+                        content: lines,
+                    }],
+                    max_tokens: 300,
+                    temperature: 0.1,
+                    json_mode: false,
+                },
+                secret_tokens,
+            ))
             .await?;
         Ok(response.text.trim().replace('\n', " "))
+    }
+
+    /// Secret claim triples (subject / predicate / object) to scrub from any
+    /// cloud consolidation prompt. Returns empty for a local destination.
+    fn secret_claim_tokens(&self) -> Result<Vec<String>> {
+        if self.llm.destination() == LlmDestination::Local {
+            return Ok(Vec::new());
+        }
+        let conn = self.db.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT subject, predicate, object
+             FROM claims
+             WHERE privacy = 'secret'
+               AND (valid_until IS NULL OR valid_until > ?)",
+        )?;
+        let rows = stmt.query_map(params![Utc::now().to_rfc3339()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (subject, predicate, object) = row?;
+            out.push(subject);
+            out.push(predicate);
+            if let Some(object) = object {
+                out.push(object);
+            }
+        }
+        Ok(out)
     }
 
     fn current_claims_all_regions(&self) -> Result<Vec<Claim>> {
@@ -430,7 +482,9 @@ mod tests {
     use anyhow::Result;
     use async_trait::async_trait;
     use chrono::{TimeZone, Utc};
-    use memora_llm::{CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError};
+    use memora_llm::{
+        CompletionResponse, LlmClient, LlmDestination, LlmError, RedactedPayload,
+    };
     use tempfile::tempdir;
 
     use crate::claims::{Claim, ClaimStore};
@@ -494,7 +548,11 @@ mod tests {
 
     #[async_trait]
     impl LlmClient for PanicWorldOverviewLlm {
-        async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+        async fn complete(
+            &self,
+            payload: RedactedPayload,
+        ) -> Result<CompletionResponse, LlmError> {
+            let req = payload.into_request();
             if req
                 .system
                 .as_deref()

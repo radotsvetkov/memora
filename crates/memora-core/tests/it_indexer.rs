@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use memora_core::claims::ClaimExtractor;
 use memora_core::indexer::{FrontmatterFixMode, Indexer};
 use memora_core::{note, Embedder, Index, Vault, VaultEvent, VectorIndex};
-use memora_llm::{CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError};
+use memora_llm::{CompletionResponse, LlmClient, LlmDestination, LlmError, RedactedPayload};
 use tempfile::tempdir;
 
 fn write_note(path: &Path, id: &str, summary: &str, tags: &[&str], body: &str) -> Result<()> {
@@ -136,7 +136,7 @@ struct RateLimitedExtractorLlm;
 
 #[async_trait]
 impl LlmClient for RateLimitedExtractorLlm {
-    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, _payload: RedactedPayload) -> Result<CompletionResponse, LlmError> {
         Err(LlmError::RateLimited)
     }
 

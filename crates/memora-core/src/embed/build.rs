@@ -5,8 +5,20 @@ use anyhow::{anyhow, Context, Result};
 use memora_llm::OllamaClient;
 
 use super::deterministic::DeterministicEmbedder;
-use super::{Embedder, OllamaEmbedder};
+use super::{Embedder, OllamaEmbedder, OpenAiEmbedder};
 use crate::vault_config::{EmbedConfig, LlmConfig};
+
+/// Cloud embedding providers transmit note bodies and query text to a remote
+/// endpoint, so — exactly like the cloud LLM clients — they are refused unless
+/// `MEMORA_ENABLE_NETWORK_LLM=1` is set. This gate lives in core so that EVERY
+/// caller is covered (the CLI and the MCP server both build embedders through
+/// this function); local providers (`deterministic`, `ollama`) never touch the
+/// network and are always allowed.
+fn network_llm_enabled() -> bool {
+    std::env::var("MEMORA_ENABLE_NETWORK_LLM")
+        .map(|value| value == "1")
+        .unwrap_or(false)
+}
 
 pub fn build_embedder(embed: &EmbedConfig, llm: &LlmConfig) -> Result<Arc<dyn Embedder>> {
     match embed.provider.as_str() {
@@ -23,6 +35,22 @@ pub fn build_embedder(embed: &EmbedConfig, llm: &LlmConfig) -> Result<Arc<dyn Em
                 .context("configure Ollama embedding client")?;
             Ok(Arc::new(OllamaEmbedder::new(Arc::new(client), embed.dim)))
         }
+        "openai" => {
+            // Cloud egress: gate before constructing anything that could send
+            // note text to OpenAI (fail-fast, before the first embed call).
+            if !network_llm_enabled() {
+                return Err(anyhow!(
+                    "embed provider `openai` sends note bodies and query text to a cloud \
+                     endpoint, but network LLM access is disabled. Set \
+                     MEMORA_ENABLE_NETWORK_LLM=1 to allow it, or use a local provider \
+                     (`[embed] provider = \"ollama\"` or `\"deterministic\"`)."
+                ));
+            }
+            Ok(Arc::new(
+                OpenAiEmbedder::new().context("configure OpenAI embedding client")?,
+            ))
+        }
+        // `deterministic` (and any unrecognised value) stays fully local.
         _ => Ok(Arc::new(DeterministicEmbedder::new(embed.dim))),
     }
 }
@@ -71,4 +99,68 @@ pub fn resolve_ollama_embedding_model(embed: &EmbedConfig, llm: &LlmConfig) -> R
                  for legacy setups."
             )
         })
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use std::sync::{Mutex, OnceLock};
+
+    use super::build_embedder;
+    use crate::vault_config::{EmbedConfig, LlmConfig};
+
+    /// Serialises tests that mutate the process-global `MEMORA_ENABLE_NETWORK_LLM`.
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn openai_embed() -> EmbedConfig {
+        EmbedConfig {
+            provider: "openai".into(),
+            model: "text-embedding-3-small".into(),
+            dim: 1536,
+            embedding_model: None,
+            endpoint: None,
+        }
+    }
+
+    fn local_llm() -> LlmConfig {
+        LlmConfig {
+            provider: "ollama".into(),
+            model: None,
+            embedding_model: None,
+            endpoint: None,
+        }
+    }
+
+    #[test]
+    fn openai_embedder_is_gated_in_core_so_mcp_is_covered() {
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        // Without the flag, the cloud embedder is refused at construction — this
+        // is the gate the MCP server relies on (it calls build_embedder directly).
+        std::env::remove_var("MEMORA_ENABLE_NETWORK_LLM");
+        let err = build_embedder(&openai_embed(), &local_llm())
+            .map(|_| ())
+            .expect_err("openai embed must be gated in core without the network flag");
+        assert!(
+            err.to_string().contains("MEMORA_ENABLE_NETWORK_LLM"),
+            "error should point at the network flag, got: {err}"
+        );
+    }
+
+    #[test]
+    fn deterministic_embedder_needs_no_flag() {
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("MEMORA_ENABLE_NETWORK_LLM");
+        let embed = EmbedConfig {
+            provider: "deterministic".into(),
+            model: "unused".into(),
+            dim: 64,
+            embedding_model: None,
+            endpoint: None,
+        };
+        build_embedder(&embed, &local_llm())
+            .map(|_| ())
+            .expect("local embedder must build without the network flag");
+    }
 }

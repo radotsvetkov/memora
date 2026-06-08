@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -9,7 +10,7 @@ use memora_core::note::{self, Frontmatter, Note, NoteSource, Privacy};
 use memora_core::{
     Challenger, ChallengerConfig, Claim, ClaimRelation, ClaimStore, Index, StaleAlert,
 };
-use memora_llm::{CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError};
+use memora_llm::{CompletionResponse, LlmClient, LlmDestination, LlmError, RedactedPayload};
 use rusqlite::params;
 use tempfile::tempdir;
 
@@ -17,7 +18,8 @@ struct ScriptedLlm;
 
 #[async_trait]
 impl LlmClient for ScriptedLlm {
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, payload: RedactedPayload) -> Result<CompletionResponse, LlmError> {
+        let req = payload.into_request();
         let prompt = req
             .messages
             .first()
@@ -473,5 +475,163 @@ async fn rerun_is_idempotent_except_for_timestamps() -> Result<()> {
         .frontier_alerts
         .iter()
         .any(|a| a.claim_id == frontier_claim.id));
+    Ok(())
+}
+
+/// Records the exact prompt content (system + every message body) handed to the
+/// wire boundary, and reports a CLOUD destination so the challenger's privacy
+/// filter engages.
+#[derive(Default)]
+struct RecordingCloudLlm {
+    wire_payloads: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl LlmClient for RecordingCloudLlm {
+    async fn complete(&self, payload: RedactedPayload) -> Result<CompletionResponse, LlmError> {
+        let req = payload.request();
+        let mut wire = req.system.clone().unwrap_or_default();
+        for message in &req.messages {
+            wire.push('\n');
+            wire.push_str(&message.content);
+        }
+        self.wire_payloads
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(wire);
+        // Valid stale-proposal JSON; harmless plain text for the other prompts.
+        Ok(CompletionResponse {
+            text: r#"{"action":"archive"}"#.to_string(),
+            model: "mock/cloud".to_string(),
+            input_tokens: None,
+            output_tokens: None,
+        })
+    }
+
+    fn model_name(&self) -> &str {
+        "mock/cloud"
+    }
+
+    fn destination(&self) -> LlmDestination {
+        LlmDestination::CloudKnown
+    }
+}
+
+fn seed_secret_claim(
+    store: &ClaimStore<'_>,
+    note_id: &str,
+    subject: &str,
+    predicate: &str,
+    object: &str,
+    confidence: f32,
+) -> Result<Claim> {
+    let span_text = format!("{subject} {predicate} {object}");
+    let claim = Claim {
+        id: Claim::compute_id(subject, predicate, Some(object), note_id, 0),
+        subject: subject.to_string(),
+        predicate: predicate.to_string(),
+        object: Some(object.to_string()),
+        note_id: note_id.to_string(),
+        span_start: 0,
+        span_end: span_text.len(),
+        span_fingerprint: Claim::compute_fingerprint(&span_text),
+        valid_from: Utc
+            .with_ymd_and_hms(2026, 4, 1, 0, 0, 0)
+            .single()
+            .ok_or_else(|| anyhow::anyhow!("invalid claim datetime"))?,
+        valid_until: None,
+        confidence,
+        privacy: Privacy::Secret,
+        extracted_by: "test/challenger".to_string(),
+        extracted_at: Utc::now(),
+    };
+    store.upsert(&claim)?;
+    Ok(claim)
+}
+
+/// The whole point of the type-enforced choke point: no Secret claim content
+/// (subject / predicate / object) — nor the raw note span behind it — may reach
+/// a cloud model from ANY challenger prompt (stale, contradiction, frontier).
+#[tokio::test]
+async fn challenger_never_sends_secret_tokens_to_cloud() -> Result<()> {
+    let fixture = setup_fixture()?;
+    // Distinctive tokens that must never appear in an outbound cloud payload.
+    let secret_subject = "acme-corp-zzz";
+    let secret_predicate = "pays_quarterly_bonus_zzz";
+    let secret_object = "275000-usd-zzz";
+    let second_object = "300000-usd-zzz";
+    let span_marker = "ULTRASECRET-SPAN-TEXT";
+
+    seed_note(
+        &fixture,
+        "secret-note-a",
+        "ops/eu",
+        "ops/eu/secret-note-a.md",
+        &format!("{secret_subject} {secret_predicate} {secret_object} {span_marker}"),
+    )?;
+    seed_note(
+        &fixture,
+        "secret-note-b",
+        "ops/us",
+        "ops/us/secret-note-b.md",
+        &format!("{secret_subject} {secret_predicate} {second_object} {span_marker}"),
+    )?;
+
+    let store = ClaimStore::new(&fixture.index);
+    // Low confidence -> frontier candidate; also a unique predicate.
+    let left = seed_secret_claim(
+        &store,
+        "secret-note-a",
+        secret_subject,
+        secret_predicate,
+        secret_object,
+        0.2,
+    )?;
+    let right = seed_secret_claim(
+        &store,
+        "secret-note-b",
+        secret_subject,
+        secret_predicate,
+        second_object,
+        0.2,
+    )?;
+    // Drive all three LLM paths: stale + contradiction + frontier.
+    store.add_relation(&left.id, &right.id, ClaimRelation::Contradicts, 1.0)?;
+    mark_stale(&fixture.db_path, &left.id)?;
+
+    let llm = RecordingCloudLlm::default();
+    let challenger = Challenger {
+        db: &fixture.index,
+        claim_store: &store,
+        llm: &llm,
+        vault: &fixture.vault,
+        config: ChallengerConfig::default(),
+    };
+    challenger.run_once().await?;
+
+    let payloads = llm
+        .wire_payloads
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // The egress must actually have happened, or this test proves nothing.
+    assert!(
+        !payloads.is_empty(),
+        "expected the challenger to call the cloud LLM at least once"
+    );
+    let forbidden = [
+        secret_subject,
+        secret_predicate,
+        secret_object,
+        second_object,
+        span_marker,
+    ];
+    for (idx, payload) in payloads.iter().enumerate() {
+        for token in forbidden {
+            assert!(
+                !payload.contains(token),
+                "outbound cloud payload #{idx} leaked secret token `{token}`:\n{payload}"
+            );
+        }
+    }
     Ok(())
 }

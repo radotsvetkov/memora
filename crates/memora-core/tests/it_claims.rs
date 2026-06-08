@@ -12,7 +12,7 @@ use memora_core::claims::{
 use memora_core::indexer::Indexer;
 use memora_core::vault::{Vault, VaultEvent};
 use memora_core::{Embedder, Index, Privacy, VectorIndex};
-use memora_llm::{CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError};
+use memora_llm::{CompletionResponse, LlmClient, LlmDestination, LlmError, RedactedPayload};
 use tempfile::tempdir;
 
 fn write_note(path: &Path, id: &str, created: &str, updated: &str, body: &str) -> Result<()> {
@@ -87,7 +87,8 @@ impl MockClaimsLlm {
 
 #[async_trait]
 impl LlmClient for MockClaimsLlm {
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, payload: RedactedPayload) -> Result<CompletionResponse, LlmError> {
+        let req = payload.into_request();
         let prompt = req
             .messages
             .first()

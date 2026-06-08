@@ -2,10 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Result;
-use memora_llm::LlmClient;
+use memora_llm::{LlmClient, LlmDestination};
 use serde_json::Value;
 
 use crate::claims::{Claim, ClaimRelation, ClaimStore, StalenessTracker};
+use crate::note::Privacy;
 
 static PREDICATE_EQUIVALENCE_CACHE: OnceLock<Mutex<HashMap<(String, String), bool>>> =
     OnceLock::new();
@@ -17,6 +18,15 @@ pub struct ContradictionDetector<'a> {
 }
 
 impl<'a> ContradictionDetector<'a> {
+    /// True when comparing these claims via the LLM would send Secret content to
+    /// a cloud endpoint. The contradiction prompts embed raw subjects,
+    /// predicates and objects, so for Secret claims on the cloud we skip the
+    /// LLM entirely rather than leak (heuristic detection still runs locally).
+    fn llm_would_leak_secret(&self, claims: &[&Claim]) -> bool {
+        self.llm.destination() != LlmDestination::Local
+            && claims.iter().any(|claim| claim.privacy == Privacy::Secret)
+    }
+
     pub async fn check_new_claim(&self, claim: &Claim) -> Result<Vec<String>> {
         let mut candidates = self
             .store
@@ -24,6 +34,9 @@ impl<'a> ContradictionDetector<'a> {
 
         for candidate in self.store.find_by_subject(&claim.subject)? {
             if candidate.predicate == claim.predicate {
+                continue;
+            }
+            if self.llm_would_leak_secret(&[claim, &candidate]) {
                 continue;
             }
             if self
@@ -41,6 +54,9 @@ impl<'a> ContradictionDetector<'a> {
                 continue;
             }
             if !seen.insert(candidate.id.clone()) {
+                continue;
+            }
+            if self.llm_would_leak_secret(&[claim, &candidate]) {
                 continue;
             }
 

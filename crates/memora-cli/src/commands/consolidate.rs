@@ -1,11 +1,10 @@
 use anyhow::Result;
 use clap::Args;
 use memora_core::{AtlasWriter, ClaimStore, WorldMapWriter};
-use memora_llm::{make_client, LlmProvider};
 use std::collections::BTreeSet;
 
 use crate::config::AppConfig;
-use crate::runtime::open_index;
+use crate::runtime::{make_gated_client, open_index};
 
 #[derive(Debug, Args)]
 pub struct ConsolidateArgs {
@@ -21,17 +20,7 @@ pub async fn run(args: ConsolidateArgs) -> Result<()> {
     let cfg = AppConfig::load(&args.vault)?;
     let index = open_index(&args.vault)?;
     let claim_store = ClaimStore::new(&index);
-    let provider = match cfg.llm.provider.as_str() {
-        "anthropic" => LlmProvider::Anthropic,
-        "openai" => LlmProvider::OpenAi,
-        _ => LlmProvider::Ollama,
-    };
-    let llm = make_client(
-        provider,
-        cfg.llm.model.clone(),
-        cfg.llm.endpoint.clone(),
-        cfg.llm.embedding_model.clone(),
-    )?;
+    let llm = make_gated_client(&cfg.llm)?;
     let atlas = AtlasWriter {
         db: &index,
         claim_store: &claim_store,

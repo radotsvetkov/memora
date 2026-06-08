@@ -5,10 +5,20 @@ use super::validator::CitationCheck;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CitationStatus {
+    /// Source span exists, fingerprint matches, quote (if any) is contained,
+    /// and the claim is still current (no expired `valid_until`).
     Verified,
+    /// The cited claim id is unknown to the store (hallucinated).
     Unverified,
+    /// The source span's bytes no longer match the recorded fingerprint
+    /// (the note was edited after extraction).
     FingerprintMismatch,
+    /// The quoted text is not contained in the cited source span.
     QuoteMismatch,
+    /// Provenance is intact (fingerprint + quote pass) but the claim has been
+    /// superseded/retracted: its `valid_until` is in the past. The cited fact
+    /// is real-but-no-longer-current, so it is surfaced (not asserted as clean).
+    Superseded,
 }
 
 #[derive(Debug, Clone)]
@@ -19,6 +29,8 @@ pub struct CitedAnswer {
     pub verified_count: usize,
     pub unverified_count: usize,
     pub mismatch_count: usize,
+    /// Citations whose provenance is intact but whose claim has been superseded.
+    pub superseded_count: usize,
     pub redacted_count: usize,
     pub degraded: bool,
 }

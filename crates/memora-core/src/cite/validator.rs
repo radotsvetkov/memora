@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::Result;
+use chrono::Utc;
 
 use crate::cite::answer::{rewrite_with_only_verified, CitationStatus, CitedAnswer};
 use crate::cite::parser::{extract_quote_before, parse_claim_markers};
@@ -79,6 +80,10 @@ impl<'a> CitationValidator<'a> {
                     || check.status == CitationStatus::QuoteMismatch
             })
             .count();
+        let superseded_count = checks
+            .iter()
+            .filter(|check| check.status == CitationStatus::Superseded)
+            .count();
         let clean_text = rewrite_with_only_verified(llm_text, &verified_ids);
 
         Ok(CitedAnswer {
@@ -88,6 +93,7 @@ impl<'a> CitationValidator<'a> {
             verified_count,
             unverified_count,
             mismatch_count,
+            superseded_count,
             redacted_count: 0,
             degraded: false,
         })
@@ -103,8 +109,7 @@ impl<'a> CitationValidator<'a> {
             return Ok(CitationStatus::Unverified);
         };
 
-        let fingerprint = Claim::compute_fingerprint(&span_text);
-        if fingerprint != claim.span_fingerprint {
+        if !Claim::fingerprint_matches(&span_text, &claim.span_fingerprint) {
             return Ok(CitationStatus::FingerprintMismatch);
         }
 
@@ -113,6 +118,16 @@ impl<'a> CitationValidator<'a> {
             let normalized_span = collapse_ws_lower(&span_text);
             if !normalized_quote.is_empty() && !normalized_span.contains(&normalized_quote) {
                 return Ok(CitationStatus::QuoteMismatch);
+            }
+        }
+
+        // Provenance is intact. A claim with an expired `valid_until` has been
+        // superseded/retracted — it is real but no longer current, so do not
+        // grant it a clean "Verified". The answer pipeline pre-filters to
+        // current claims; this guards direct/MCP validation of arbitrary text.
+        if let Some(valid_until) = claim.valid_until {
+            if valid_until <= Utc::now() {
+                return Ok(CitationStatus::Superseded);
             }
         }
 
@@ -300,6 +315,61 @@ refs: []
             .validate("\"Completely unrelated quote\" [claim:bbbbbbbbbbbbbbbb].")
             .await?;
         assert_eq!(answer.checks[0].status, CitationStatus::QuoteMismatch);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn validator_marks_superseded_when_valid_until_expired() -> Result<()> {
+        let temp = tempdir()?;
+        let vault = temp.path().join("vault");
+        fs::create_dir_all(&vault)?;
+        let note_rel_path = PathBuf::from("note.md");
+        let body = "Rado works at HMC and leads Memora.";
+        let note = make_note("note-1", note_rel_path.clone(), body);
+        let full_note_path = vault.join(&note_rel_path);
+        write_note_file(&full_note_path, &note.fm.id, body)?;
+
+        let index = Index::open(&temp.path().join("index.db"))?;
+        index.upsert_note(&note, body)?;
+        let store = ClaimStore::new(&index);
+        let span_start = body.find("Rado works at HMC").expect("span start");
+        let span_end = span_start + "Rado works at HMC".len();
+        let span = body
+            .get(span_start..span_end)
+            .expect("span should be valid for test body");
+        // Provenance intact, but the claim was superseded yesterday.
+        let claim = Claim {
+            id: "cccccccccccccccc".to_string(),
+            subject: "Rado".to_string(),
+            predicate: "works_at".to_string(),
+            object: Some("HMC".to_string()),
+            note_id: note.fm.id.clone(),
+            span_start,
+            span_end,
+            span_fingerprint: Claim::compute_fingerprint(span),
+            valid_from: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap(),
+            valid_until: Some(Utc::now() - chrono::Duration::days(1)),
+            confidence: 1.0,
+            privacy: Privacy::Private,
+            extracted_by: "test".to_string(),
+            extracted_at: Utc::now(),
+        };
+        store.upsert(&claim)?;
+
+        let validator = CitationValidator {
+            store: &store,
+            index: &index,
+            vault_root: &vault,
+        };
+
+        let answer = validator
+            .validate("Rado works at HMC [claim:cccccccccccccccc].")
+            .await?;
+        assert_eq!(answer.checks[0].status, CitationStatus::Superseded);
+        assert_eq!(answer.verified_count, 0);
+        assert_eq!(answer.superseded_count, 1);
+        // A superseded fact must not survive into the clean answer.
+        assert!(!answer.clean_text.contains("cccccccccccccccc"));
         Ok(())
     }
 }

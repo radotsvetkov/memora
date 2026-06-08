@@ -8,7 +8,7 @@ use memora_core::claims::ClaimExtractor;
 use memora_core::note::{Frontmatter, Note, NoteSource, Privacy};
 use memora_core::privacy::PrivacyFilter;
 use memora_llm::{
-    CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError, LlmProvider,
+    CompletionResponse, LlmClient, LlmDestination, LlmError, LlmProvider, RedactedPayload,
 };
 
 struct MockExtractorLlm {
@@ -17,7 +17,7 @@ struct MockExtractorLlm {
 
 #[async_trait]
 impl LlmClient for MockExtractorLlm {
-    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, _payload: RedactedPayload) -> Result<CompletionResponse, LlmError> {
         Ok(CompletionResponse {
             text: self.canned_response.clone(),
             model: "mock/privacy".to_string(),
@@ -85,7 +85,9 @@ async fn cloud_filter_redacts_secret_claim_from_inline_marker() -> Result<()> {
     assert_eq!(stats.redacted, 1);
     assert_eq!(redacted.len(), 1);
     assert!(redacted[0].redacted);
-    assert_eq!(redacted[0].subject, "Comp");
+    // The subject ("Comp") is itself sensitive and must be redacted for a
+    // Secret claim bound for the cloud — not just the predicate/object.
+    assert_eq!(redacted[0].subject, "[redacted]");
     assert_eq!(redacted[0].predicate, "[redacted]");
     assert_eq!(redacted[0].object, "[redacted]");
     Ok(())

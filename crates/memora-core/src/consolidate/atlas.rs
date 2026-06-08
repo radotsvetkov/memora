@@ -17,6 +17,7 @@ use crate::claims::{Claim, ClaimStore};
 use crate::consolidate::prompts::{REGION_OVERVIEW_PROMPT, SUBREGION_PROPOSAL_PROMPT};
 use crate::index::Index;
 use crate::note::{self, Privacy};
+use crate::privacy::PrivacyFilter;
 
 const MIN_CLAIMS_FOR_SYNTHESIS: usize = 5;
 
@@ -224,6 +225,12 @@ impl<'a> AtlasWriter<'a> {
             .collect())
     }
 
+    /// Secret claim triples to scrub from any cloud consolidation prompt that
+    /// embeds `claims`. Empty for a local destination.
+    fn secret_tokens(&self, claims: &[Claim]) -> Vec<String> {
+        PrivacyFilter::from_destination(self.llm.destination(), true).secret_tokens(claims)
+    }
+
     async fn region_overview(&self, region: &str, claims: &[Claim]) -> Result<String> {
         let compact = claims
             .iter()
@@ -238,19 +245,23 @@ impl<'a> AtlasWriter<'a> {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        let secret_tokens = self.secret_tokens(claims);
         let response = self
             .llm
-            .complete(CompletionRequest {
-                model: None,
-                system: Some(REGION_OVERVIEW_PROMPT.to_string()),
-                messages: vec![Message {
-                    role: Role::User,
-                    content: format!("Region: {region}\nClaims:\n{compact}"),
-                }],
-                max_tokens: 220,
-                temperature: 0.1,
-                json_mode: false,
-            })
+            .complete(self.llm.redact(
+                CompletionRequest {
+                    model: None,
+                    system: Some(REGION_OVERVIEW_PROMPT.to_string()),
+                    messages: vec![Message {
+                        role: Role::User,
+                        content: format!("Region: {region}\nClaims:\n{compact}"),
+                    }],
+                    max_tokens: 220,
+                    temperature: 0.1,
+                    json_mode: false,
+                },
+                &secret_tokens,
+            ))
             .await?;
         Ok(response.text.trim().replace('\n', " "))
     }
@@ -271,22 +282,31 @@ impl<'a> AtlasWriter<'a> {
                     .map(|claim| format!("{subject} [claim:{}]", claim.id))
             })
             .collect::<Vec<_>>();
+        let claims_flat = claims_by_subject
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        let secret_tokens = self.secret_tokens(&claims_flat);
         let response = self
             .llm
-            .complete(CompletionRequest {
-                model: None,
-                system: Some(REGION_OVERVIEW_PROMPT.to_string()),
-                messages: vec![Message {
-                    role: Role::User,
-                    content: format!(
-                        "Write 200-300 words about region '{region}'. Cite top subjects using existing markers.\nTop subjects:\n{}",
-                        top.join("\n")
-                    ),
-                }],
-                max_tokens: 520,
-                temperature: 0.1,
-                json_mode: false,
-            })
+            .complete(self.llm.redact(
+                CompletionRequest {
+                    model: None,
+                    system: Some(REGION_OVERVIEW_PROMPT.to_string()),
+                    messages: vec![Message {
+                        role: Role::User,
+                        content: format!(
+                            "Write 200-300 words about region '{region}'. Cite top subjects using existing markers.\nTop subjects:\n{}",
+                            top.join("\n")
+                        ),
+                    }],
+                    max_tokens: 520,
+                    temperature: 0.1,
+                    json_mode: false,
+                },
+                &secret_tokens,
+            ))
             .await?;
         Ok(format!(
             "# Index: {region}\n\n_{}_\n\n## Top subjects\n{}\n",
@@ -475,19 +495,23 @@ impl<'a> AtlasWriter<'a> {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        let secret_tokens = self.secret_tokens(claims);
         let response = self
             .llm
-            .complete(CompletionRequest {
-                model: None,
-                system: Some(SUBREGION_PROPOSAL_PROMPT.to_string()),
-                messages: vec![Message {
-                    role: Role::User,
-                    content: prompt_payload,
-                }],
-                max_tokens: 1_024,
-                temperature: 0.0,
-                json_mode: true,
-            })
+            .complete(self.llm.redact(
+                CompletionRequest {
+                    model: None,
+                    system: Some(SUBREGION_PROPOSAL_PROMPT.to_string()),
+                    messages: vec![Message {
+                        role: Role::User,
+                        content: prompt_payload,
+                    }],
+                    max_tokens: 1_024,
+                    temperature: 0.0,
+                    json_mode: true,
+                },
+                &secret_tokens,
+            ))
             .await?;
         let parsed: SubregionProposalResponse =
             serde_json::from_str(response.text.trim()).context("parse SUBREGION proposal JSON")?;
@@ -975,7 +999,9 @@ mod tests {
     use anyhow::Result;
     use async_trait::async_trait;
     use chrono::{TimeZone, Utc};
-    use memora_llm::{CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError};
+    use memora_llm::{
+        CompletionResponse, LlmClient, LlmDestination, LlmError, RedactedPayload,
+    };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -1073,7 +1099,10 @@ mod tests {
 
     #[async_trait]
     impl LlmClient for CountingLlm {
-        async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+        async fn complete(
+            &self,
+            _payload: RedactedPayload,
+        ) -> Result<CompletionResponse, LlmError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(CompletionResponse {
                 text: "unexpected LLM output".to_string(),

@@ -19,6 +19,9 @@ target/
 CHECKPOINT-*.md
 PRECHECK-FAIL.md
 
+# Local analysis / workflow artifacts
+.memora-*.wf.js
+
 # mdBook output
 docs/book/
 _site/

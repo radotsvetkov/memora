@@ -9,7 +9,7 @@ use memora_core::consolidate::atlas::AtlasWriter;
 use memora_core::consolidate::world_map::WorldMapWriter;
 use memora_core::note::{self, Frontmatter, Note, NoteSource, Privacy};
 use memora_core::Index;
-use memora_llm::{CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError};
+use memora_llm::{CompletionResponse, LlmClient, LlmDestination, LlmError, RedactedPayload};
 use rusqlite::params;
 use tempfile::tempdir;
 
@@ -85,7 +85,8 @@ struct MockConsolidateLlm {
 
 #[async_trait]
 impl LlmClient for MockConsolidateLlm {
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, payload: RedactedPayload) -> Result<CompletionResponse, LlmError> {
+        let req = payload.into_request();
         let system = req.system.unwrap_or_default();
         let user = req
             .messages

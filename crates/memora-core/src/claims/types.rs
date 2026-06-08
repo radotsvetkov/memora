@@ -39,9 +39,29 @@ impl Claim {
         hash.to_hex().to_string().chars().take(16).collect()
     }
 
+    /// Full-width blake3 (256-bit) fingerprint of a source span, hex-encoded.
+    ///
+    /// This is the cryptographic basis of citation verification, so it uses the
+    /// full digest. Earlier versions truncated it to 64 bits (16 hex chars);
+    /// [`Claim::fingerprint_matches`] still accepts those legacy fingerprints so
+    /// existing vaults keep verifying until they are re-indexed (which upgrades
+    /// them to full width). Note this is distinct from [`Claim::compute_id`],
+    /// whose 16-char output is a collision-tolerant *identifier*, not an
+    /// integrity hash.
     pub fn compute_fingerprint(span_text: &str) -> String {
-        let hash = blake3::hash(span_text.as_bytes());
-        hash.to_hex().to_string().chars().take(16).collect()
+        blake3::hash(span_text.as_bytes()).to_hex().to_string()
+    }
+
+    /// Does `span_text` match a `stored` fingerprint? Tolerant of the legacy
+    /// 64-bit (16 hex char) format so claims written by older versions still
+    /// verify; full-width (256-bit) fingerprints are compared in full.
+    pub fn fingerprint_matches(span_text: &str, stored: &str) -> bool {
+        let full = Self::compute_fingerprint(span_text);
+        match stored.len() {
+            len if len == full.len() => full == stored,
+            16 => full.get(..16).map(|prefix| prefix == stored).unwrap_or(false),
+            _ => false,
+        }
     }
 
     /// Human-readable object for prompts and logs; unary claims show a placeholder.
@@ -102,6 +122,26 @@ mod tests {
             id,
             Claim::compute_id("rado", "works_at", Some("hmc"), "note-1", 12)
         );
+    }
+
+    #[test]
+    fn fingerprint_is_full_width_blake3() {
+        let fp = Claim::compute_fingerprint("Rado works at HMC");
+        // 256-bit blake3 = 64 hex chars (not the legacy 16).
+        assert_eq!(fp.len(), 64);
+        assert!(Claim::fingerprint_matches("Rado works at HMC", &fp));
+        assert!(!Claim::fingerprint_matches("Rado works at Google", &fp));
+    }
+
+    #[test]
+    fn fingerprint_matches_accepts_legacy_truncated_fingerprints() {
+        // A pre-existing claim stored only the first 16 hex chars; it must still
+        // verify against the same span so old vaults keep working.
+        let span = "Rado works at HMC";
+        let legacy: String = Claim::compute_fingerprint(span).chars().take(16).collect();
+        assert_eq!(legacy.len(), 16);
+        assert!(Claim::fingerprint_matches(span, &legacy));
+        assert!(!Claim::fingerprint_matches("tampered text", &legacy));
     }
 
     #[test]

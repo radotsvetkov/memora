@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use crate::client::{
-    shared_http_client, CompletionRequest, CompletionResponse, LlmClient, LlmDestination, LlmError,
+    shared_http_client, CompletionResponse, LlmClient, LlmDestination, LlmError, RedactedPayload,
 };
 
 const DEFAULT_MODEL: &str = "llama3.1:8b";
@@ -105,7 +105,8 @@ impl OllamaClient {
 
 #[async_trait::async_trait]
 impl LlmClient for OllamaClient {
-    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, payload: RedactedPayload) -> Result<CompletionResponse, LlmError> {
+        let req = payload.into_request();
         let model = req.model.clone().unwrap_or_else(|| self.chat_model.clone());
         let body = OllamaRequest {
             model: model.clone(),
@@ -289,7 +290,7 @@ mod tests {
 
         let client = OllamaClient::new(None, None, None).expect("client should construct");
         let out = client
-            .complete(make_request(false))
+            .complete(client.redact(make_request(false), &[]))
             .await
             .expect("request should succeed");
 
@@ -309,7 +310,7 @@ mod tests {
 
         let client = OllamaClient::new(None, None, None).expect("client should construct");
         let err = client
-            .complete(make_request(false))
+            .complete(client.redact(make_request(false), &[]))
             .await
             .expect_err("request should fail");
         assert!(matches!(err, LlmError::RateLimited));
@@ -329,7 +330,7 @@ mod tests {
 
         let client = OllamaClient::new(None, None, None).expect("client should construct");
         let err = client
-            .complete(make_request(false))
+            .complete(client.redact(make_request(false), &[]))
             .await
             .expect_err("request should fail");
         assert!(matches!(err, LlmError::ServerError(500, body) if body == "ollama crashed"));
@@ -351,7 +352,7 @@ mod tests {
 
         let client = OllamaClient::new(None, None, None).expect("client should construct");
         let _ = client
-            .complete(make_request(true))
+            .complete(client.redact(make_request(true), &[]))
             .await
             .expect("request should succeed");
     }
