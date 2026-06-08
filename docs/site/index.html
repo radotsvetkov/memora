@@ -3,38 +3,39 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Memora - Verify Every AI Citation Against the Source</title>
-  <meta name="description" content="Local-first verification layer that catches your AI citing sources that do not say what it claims. Span-hash citation rejection, claim graph, MCP-native. Single Rust binary.">
-  <meta property="og:title" content="Memora - Verify Every AI Citation Against the Source">
-  <meta property="og:description" content="Cite-or-it-didn't-happen. Memora retrieves claims, not notes and validates every citation against your markdown.">
+  <title>Memora — verify every AI citation against the source</title>
+  <meta name="description" content="Memora is a local verification layer for AI memory. It re-reads the source span behind every citation and recomputes its hash, then rejects anything the source does not contain. Single Rust binary, MCP-native, Apache-2.0.">
+  <meta property="og:title" content="Memora — verify every AI citation against the source">
+  <meta property="og:description" content="A local verification layer for AI memory. It re-reads the source behind every citation and rejects what the source does not say. Single Rust binary, MCP-native.">
+  <meta property="og:type" content="website">
   <meta property="og:url" content="https://radotsvetkov.github.io/memora">
+  <meta name="theme-color" content="#0a0c10">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=Crimson+Pro:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:           #08090c;
-      --bg2:          #0d0f14;
-      --bg3:          #14171f;
-      --bg-card:      #11141b;
-      --emerald:      #10b981;
-      --emerald-dim:  #059669;
-      --emerald-glow: #34d399;
-      --violet:       #a78bfa;
-      --violet-dim:   #8b5cf6;
-      --violet-deep:  #7c3aed;
-      --amber:        #f59e0b;
-      --red:          #ef4444;
-      --text:         #e8eaed;
-      --text-dim:     #8b91a0;
-      --text-muted:   #4b5263;
-      --border:       #1f2937;
-      --border-soft:  #161c2c;
-      --mono:         'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-      --display:      'Space Grotesk', system-ui, sans-serif;
-      --serif:        'Crimson Pro', Georgia, serif;
+      --bg:          #0a0c10;
+      --bg-soft:     #0e1116;
+      --surface:     #12151c;
+      --surface-2:   #161a23;
+      --border:      #1f2630;
+      --border-soft: #181d26;
+      --text:        #e8ebf1;
+      --text-dim:    #9aa4b4;
+      --text-muted:  #626c7e;
+      --accent:      #34d399;
+      --accent-dim:  #10b981;
+      --violet:      #b3a4f7;
+      --amber:       #fbbf24;
+      --red:         #f87171;
+      --sans:        'Inter', system-ui, -apple-system, sans-serif;
+      --display:     'Space Grotesk', var(--sans);
+      --mono:        'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+      --maxw:        1080px;
+      --radius:      14px;
     }
 
     html { scroll-behavior: smooth; }
@@ -42,1150 +43,296 @@
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: var(--mono);
-      font-size: 14px;
-      line-height: 1.6;
-      overflow-x: hidden;
+      font-family: var(--sans);
+      font-size: 17px;
+      line-height: 1.65;
       -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      overflow-x: hidden;
     }
 
-    /* Subtle scanline / dust overlay so the page feels like a calm
-       forensic console rather than a marketing brochure. */
-    body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background: repeating-linear-gradient(
-        0deg,
-        transparent,
-        transparent 2px,
-        rgba(0, 0, 0, 0.04) 2px,
-        rgba(0, 0, 0, 0.04) 4px
-      );
-      pointer-events: none;
-      z-index: 1000;
-    }
+    a { color: inherit; text-decoration: none; }
+    code, pre { font-family: var(--mono); }
 
-    /* ─── NAV ─── */
-    nav {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      z-index: 100;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 32px;
-      height: 56px;
-      background: rgba(8, 9, 12, 0.92);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid rgba(31, 41, 55, 0.9);
-      box-shadow: 0 1px 0 rgba(16, 185, 129, 0.06);
-    }
+    .container { max-width: var(--maxw); margin: 0 auto; padding: 0 28px; }
+    section { position: relative; }
 
-    .nav-logo {
-      display: flex;
-      align-items: baseline;
-      gap: 10px;
-      text-decoration: none;
-      color: var(--text);
-    }
-
-    .nav-name {
-      font-family: var(--display);
-      font-size: 20px;
-      font-weight: 600;
-      letter-spacing: 0.06em;
-      color: var(--text);
-    }
-
-    .nav-name:hover {
-      color: var(--emerald-glow);
-    }
-
-    .nav-version {
-      font-size: 10px;
+    .eyebrow {
       font-family: var(--mono);
-      color: var(--violet);
-      letter-spacing: 0.04em;
-    }
-
-    .nav-links {
-      display: flex;
-      align-items: center;
-      gap: 22px;
-      list-style: none;
-    }
-
-    .nav-links a {
-      color: var(--text-dim);
-      text-decoration: none;
-      font-size: 12px;
-      letter-spacing: 0.05em;
-      transition: color 0.15s;
-      white-space: nowrap;
-    }
-
-    .nav-links a:hover { color: var(--emerald-glow); }
-
-    .nav-cta {
-      background: linear-gradient(135deg, var(--emerald) 0%, var(--violet-dim) 120%) !important;
-      color: var(--bg) !important;
-      padding: 6px 16px !important;
-      font-weight: 600 !important;
-      transition: filter 0.15s, box-shadow 0.15s !important;
-      box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.25);
-    }
-
-    .nav-cta:hover {
-      filter: brightness(1.08);
-      box-shadow: 0 0 14px rgba(16, 185, 129, 0.35);
-    }
-
-    /* ─── HERO ─── */
-    .hero {
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 96px 24px 64px;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .hero-grid {
-      position: absolute;
-      inset: 0;
-      background-image:
-        linear-gradient(rgba(16, 185, 129, 0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(167, 139, 250, 0.045) 1px, transparent 1px);
-      background-size: 48px 48px;
-      mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black 40%, transparent 100%);
-    }
-
-    .hero-glow {
-      position: absolute;
-      width: 760px;
-      height: 760px;
-      background:
-        radial-gradient(circle at 35% 40%, rgba(16, 185, 129, 0.10) 0%, transparent 45%),
-        radial-gradient(circle at 65% 55%, rgba(167, 139, 250, 0.08) 0%, transparent 50%);
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -60%);
-      pointer-events: none;
-    }
-
-    .hero-glyph {
-      font-family: var(--mono);
-      font-size: clamp(8px, 1.05vw, 12px);
-      line-height: 1.15;
-      color: var(--emerald);
-      text-align: center;
-      white-space: pre;
-      margin-bottom: 28px;
-      opacity: 0;
-      animation: fadeUp 0.8s ease 0.2s forwards;
-      text-shadow:
-        0 0 14px rgba(16, 185, 129, 0.35),
-        0 0 28px rgba(167, 139, 250, 0.20);
-    }
-
-    .hero-glyph .gv { color: var(--violet); text-shadow: 0 0 12px rgba(167, 139, 250, 0.55); }
-    .hero-glyph .ga { color: var(--amber); }
-    .hero-glyph .gd { color: var(--text-muted); }
-
-    .hero-title {
-      font-family: var(--display);
-      font-size: clamp(56px, 9.5vw, 116px);
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      color: var(--text);
-      text-align: center;
-      line-height: 0.96;
-      margin-bottom: 12px;
-      opacity: 0;
-      animation: fadeUp 0.8s ease 0.4s forwards;
-    }
-
-    .hero-title .h-mem { color: var(--emerald-glow); text-shadow: 0 0 28px rgba(16, 185, 129, 0.30); }
-    .hero-title .h-ora { color: var(--violet); text-shadow: 0 0 22px rgba(167, 139, 250, 0.30); }
-
-    .hero-tagline {
-      font-family: var(--serif);
-      font-size: clamp(16px, 2.4vw, 22px);
-      font-weight: 300;
-      font-style: italic;
-      color: var(--text-dim);
-      text-align: center;
-      margin-bottom: 8px;
-      letter-spacing: 0.02em;
-      opacity: 0;
-      animation: fadeUp 0.8s ease 0.5s forwards;
-    }
-
-    .hero-promise {
-      font-family: var(--mono);
-      font-size: 13px;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      color: var(--emerald);
-      text-align: center;
-      margin-bottom: 24px;
-      opacity: 0;
-      animation: fadeUp 0.8s ease 0.55s forwards;
-    }
-
-    .hero-promise .sep { color: var(--text-muted); margin: 0 10px; }
-
-    .hero-pills {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: center;
-      margin-bottom: 36px;
-      opacity: 0;
-      animation: fadeUp 0.8s ease 0.6s forwards;
-    }
-
-    .pill {
-      border: 1px solid var(--border);
-      color: var(--text-dim);
-      padding: 4px 12px;
-      font-size: 11px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    .pill-emerald { border-color: rgba(16, 185, 129, 0.4); color: var(--emerald-glow); }
-    .pill-violet  { border-color: rgba(167, 139, 250, 0.4); color: var(--violet); }
-
-    .hero-actions {
-      display: flex;
-      gap: 14px;
-      flex-wrap: wrap;
-      justify-content: center;
-      margin-bottom: 56px;
-      opacity: 0;
-      animation: fadeUp 0.8s ease 0.7s forwards;
-    }
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 22px;
-      font-family: var(--mono);
-      font-size: 13px;
-      font-weight: 500;
-      text-decoration: none;
-      letter-spacing: 0.04em;
-      transition: all 0.15s;
-      cursor: pointer;
-      border: none;
-    }
-
-    .btn-primary {
-      background: var(--emerald);
-      color: var(--bg);
-    }
-
-    .btn-primary:hover {
-      background: var(--emerald-glow);
-      transform: translateY(-1px);
-      box-shadow: 0 8px 24px rgba(16, 185, 129, 0.25);
-    }
-
-    .btn-secondary {
-      background: transparent;
-      color: var(--text);
-      border: 1px solid var(--border);
-    }
-
-    .btn-secondary:hover {
-      border-color: rgba(167, 139, 250, 0.5);
-      color: var(--violet);
-    }
-
-    /* ─── TERMINAL DEMO ─── */
-    .terminal-wrap {
-      width: 100%;
-      max-width: 820px;
-      opacity: 0;
-      animation: fadeUp 0.8s ease 0.9s forwards;
-    }
-
-    .terminal {
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      overflow: hidden;
-    }
-
-    .terminal-bar {
-      background: var(--bg3);
-      padding: 10px 16px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-    }
-
-    .dot-red    { background: #ef4444; }
-    .dot-yellow { background: #f59e0b; }
-    .dot-green  { background: #10b981; }
-
-    .terminal-title {
-      margin-left: auto;
-      margin-right: auto;
-      font-size: 11px;
-      color: var(--text-dim);
-      letter-spacing: 0.1em;
-    }
-
-    .terminal-body {
-      padding: 22px 26px;
-      font-size: 13px;
-      line-height: 1.85;
-    }
-
-    .t-prompt   { color: var(--violet); }
-    .t-cmd      { color: var(--text); }
-    .t-output   { color: var(--text-dim); }
-    .t-emerald  { color: var(--emerald-glow); }
-    .t-violet   { color: var(--violet); }
-    .t-amber    { color: var(--amber); }
-    .t-red      { color: var(--red); }
-    .t-dim      { color: var(--text-muted); }
-    .t-claim    { color: var(--violet); background: rgba(167, 139, 250, 0.08); padding: 0 4px; border-radius: 2px; }
-    .t-verified { color: var(--emerald-glow); }
-    .t-stripped { color: var(--red); text-decoration: line-through; opacity: 0.7; }
-
-    .t-bar {
-      display: inline-block;
-      width: 2px;
-      height: 14px;
-      background: var(--emerald);
-      vertical-align: middle;
-      animation: blink 1s step-end infinite;
-    }
-
-    /* ─── SECTION BASE ─── */
-    section {
-      padding: 96px 24px;
-    }
-
-    .container {
-      max-width: 1120px;
-      margin: 0 auto;
-    }
-
-    .section-label {
-      font-size: 11px;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      color: var(--emerald);
-      margin-bottom: 14px;
-    }
-
-    .section-title {
-      font-family: var(--display);
-      font-size: clamp(28px, 4.6vw, 56px);
-      font-weight: 600;
-      letter-spacing: -0.01em;
-      color: var(--text);
-      line-height: 1.05;
-      margin-bottom: 20px;
-      overflow-wrap: break-word;
-    }
-
-    .section-body {
-      font-family: var(--serif);
-      font-size: 18px;
-      font-weight: 300;
-      color: var(--text-dim);
-      max-width: 580px;
-      line-height: 1.65;
-    }
-
-    /* ─── CLAIM ANATOMY ─── */
-    .anatomy {
-      background: var(--bg2);
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .anatomy-layout {
-      display: grid;
-      grid-template-columns: 1fr 80px 1fr;
-      gap: 0;
-      align-items: stretch;
-      margin-top: 56px;
-    }
-
-    @media (max-width: 880px) {
-      .anatomy-layout { grid-template-columns: 1fr; gap: 24px; }
-      .anatomy-arrow { display: none; }
-    }
-
-    .anatomy-col-label {
-      font-size: 10px;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      margin-bottom: 12px;
-    }
-
-    .md-file {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      padding: 22px 24px;
-      font-size: 13px;
-      line-height: 1.7;
-      position: relative;
-    }
-
-    .md-file-name {
-      font-size: 11px;
-      color: var(--violet);
-      letter-spacing: 0.06em;
-      margin-bottom: 14px;
-      padding-bottom: 10px;
-      border-bottom: 1px dashed var(--border);
-    }
-
-    .md-frontmatter {
-      color: var(--text-muted);
-      font-size: 12px;
-      margin-bottom: 14px;
-    }
-
-    .md-prose {
-      color: var(--text-dim);
-    }
-
-    .md-span {
-      background: rgba(16, 185, 129, 0.13);
-      color: var(--text);
-      border-bottom: 1px solid var(--emerald);
-      padding: 1px 3px;
-      position: relative;
-      animation: spanPulse 3.6s ease-in-out infinite;
-    }
-
-    .md-span::after {
-      content: 'span 184..281';
-      position: absolute;
-      bottom: -22px;
-      left: 0;
-      font-size: 10px;
-      letter-spacing: 0.08em;
-      color: var(--emerald);
-      white-space: nowrap;
-    }
-
-    .anatomy-arrow {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-      gap: 8px;
-      color: var(--emerald);
-      font-size: 11px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-    }
-
-    .anatomy-arrow .arrow-line {
-      width: 100%;
-      height: 1px;
-      background: linear-gradient(90deg, transparent 0%, var(--emerald) 30%, var(--violet) 70%, transparent 100%);
-      position: relative;
-    }
-
-    .anatomy-arrow .arrow-line::after {
-      content: '▶';
-      position: absolute;
-      right: 0;
-      top: 50%;
-      transform: translate(0, -50%);
-      color: var(--violet);
-    }
-
-    .anatomy-arrow .arrow-label {
-      color: var(--text-muted);
-    }
-
-    .claim-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      padding: 22px 24px;
-      font-family: var(--mono);
-      font-size: 13px;
-      line-height: 1.7;
-      position: relative;
-    }
-
-    .claim-card::before {
-      content: '';
-      position: absolute;
-      left: -1px;
-      top: -1px;
-      bottom: -1px;
-      width: 3px;
-      background: linear-gradient(180deg, var(--emerald) 0%, var(--violet) 100%);
-    }
-
-    .claim-card-id {
-      font-size: 11px;
-      color: var(--violet);
-      letter-spacing: 0.06em;
-      margin-bottom: 14px;
-      padding-bottom: 10px;
-      border-bottom: 1px dashed var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .claim-card-id .verified-badge {
-      color: var(--emerald-glow);
-      font-size: 10px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-    }
-
-    .claim-card-id .verified-badge::before {
-      content: '✓';
-      display: inline-block;
-      width: 14px;
-      height: 14px;
-      line-height: 14px;
-      text-align: center;
-      background: rgba(16, 185, 129, 0.18);
-      color: var(--emerald-glow);
-      border-radius: 50%;
-      font-size: 10px;
-    }
-
-    .claim-row {
-      display: grid;
-      grid-template-columns: 90px 1fr;
-      gap: 14px;
-      padding: 6px 0;
-      align-items: baseline;
-    }
-
-    .claim-key {
-      color: var(--text-muted);
-      font-size: 11px;
-      letter-spacing: 0.06em;
-    }
-
-    .claim-val {
-      color: var(--text);
-      word-break: break-word;
-    }
-
-    .claim-val.subj   { color: var(--emerald-glow); }
-    .claim-val.pred   { color: var(--violet); }
-    .claim-val.fp     { color: var(--text-dim); font-size: 12px; }
-    .claim-val.span   { color: var(--text-dim); font-size: 12px; }
-    .claim-val.priv   { color: var(--amber); }
-
-    /* ─── WHY GRID ─── */
-    .why {
-      background: var(--bg);
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .why-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 1px;
-      background: var(--border);
-      margin-top: 56px;
-    }
-
-    .why-card {
-      background: var(--bg);
-      padding: 30px 28px;
-      position: relative;
-      overflow: hidden;
-      transition: background 0.2s;
-    }
-
-    .why-card:hover { background: var(--bg2); }
-
-    .why-card::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, var(--emerald) 0%, var(--violet) 100%);
-      transform: scaleX(0);
-      transform-origin: left;
-      transition: transform 0.3s ease;
-    }
-
-    .why-card:hover::before { transform: scaleX(1); }
-
-    .why-icon {
-      font-size: 22px;
-      margin-bottom: 14px;
-      display: inline-block;
-      width: 38px;
-      height: 38px;
-      line-height: 38px;
-      text-align: center;
-      border: 1px solid var(--border);
-      color: var(--emerald);
-      background: rgba(16, 185, 129, 0.05);
-    }
-
-    .why-card h3 {
-      font-family: var(--display);
-      font-size: 16px;
-      font-weight: 600;
-      letter-spacing: 0.01em;
-      color: var(--text);
-      margin-bottom: 10px;
-    }
-
-    .why-card p {
-      font-family: var(--serif);
-      font-size: 15px;
-      font-weight: 300;
-      color: var(--text-dim);
-      line-height: 1.65;
-    }
-
-    /* ─── LIVE FLOW ─── */
-    .showcase {
-      background: var(--bg2);
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .showcase-head {
-      text-align: center;
-      max-width: 680px;
-      margin: 0 auto 36px;
-    }
-
-    .live-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 10px;
+      font-size: 12.5px;
       letter-spacing: 0.14em;
       text-transform: uppercase;
-      color: var(--text-dim);
-      margin-bottom: 12px;
+      color: var(--accent);
+      margin-bottom: 18px;
     }
 
-    .live-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--emerald);
-      box-shadow: 0 0 10px rgba(16, 185, 129, 0.7);
-      animation: pulseDot 2.4s ease-in-out infinite;
+    h1, h2, h3 { font-family: var(--display); font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; }
+    h2 { font-size: clamp(28px, 4vw, 40px); }
+    p { color: var(--text-dim); }
+    .lead { font-size: clamp(17px, 2vw, 20px); color: var(--text-dim); max-width: 600px; }
+
+    /* ── Nav ── */
+    nav {
+      position: sticky; top: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 64px; padding: 0 28px;
+      background: rgba(10, 12, 16, 0.72);
+      backdrop-filter: saturate(140%) blur(14px);
+      border-bottom: 1px solid var(--border-soft);
     }
+    .brand { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: -0.01em; }
+    .brand .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px rgba(52,211,153,.7); }
+    .brand .ver { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--text-muted); letter-spacing: 0.02em; padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; }
+    .nav-links { display: flex; align-items: center; gap: 26px; }
+    .nav-links a { font-size: 14.5px; color: var(--text-dim); transition: color .15s; }
+    .nav-links a:hover { color: var(--text); }
+    .nav-gh { display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px; border: 1px solid var(--border); border-radius: 9px; color: var(--text) !important; font-weight: 500; transition: border-color .15s, background .15s; }
+    .nav-gh:hover { border-color: #2c3543; background: var(--surface); }
+    @media (max-width: 820px) { .nav-links a:not(.nav-gh) { display: none; } }
 
-    .terminal-live .terminal-body {
-      min-height: 240px;
+    /* ── Hero ── */
+    .hero { padding: 96px 0 64px; text-align: center; }
+    .hero::before {
+      content: ''; position: absolute; inset: -200px 0 auto 0; height: 600px; pointer-events: none;
+      background: radial-gradient(620px 320px at 50% 0%, rgba(52,211,153,0.10), transparent 70%);
     }
-
-    .demo-caption {
-      text-align: center;
-      font-family: var(--serif);
-      font-size: 15px;
-      font-weight: 300;
-      font-style: italic;
-      color: var(--text-muted);
-      margin-top: 20px;
+    .hero h1 { font-size: clamp(38px, 6.2vw, 66px); max-width: 16ch; margin: 0 auto 22px; }
+    .hero h1 .hl { color: var(--accent); }
+    .hero .lead { margin: 0 auto 16px; max-width: 660px; }
+    .hero .promise { font-family: var(--mono); font-size: 14px; color: var(--text-muted); margin-bottom: 34px; letter-spacing: 0.02em; }
+    .cta-row { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-bottom: 30px; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 20px; border-radius: 10px; font-family: var(--sans); font-size: 15px; font-weight: 600;
+      border: 1px solid transparent; cursor: pointer; transition: transform .12s ease, background .15s, border-color .15s;
     }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary { background: var(--accent); color: #05231a; }
+    .btn-primary:hover { background: #4fe0ab; }
+    .btn-ghost { background: var(--surface); color: var(--text); border-color: var(--border); }
+    .btn-ghost:hover { border-color: #2c3543; background: var(--surface-2); }
+    .trust { display: flex; flex-wrap: wrap; gap: 8px 28px; justify-content: center; font-size: 13.5px; color: var(--text-muted); font-family: var(--mono); }
+    .trust b { color: var(--text-dim); font-weight: 500; }
+    .trust .sep { color: var(--border); }
 
-    /* ─── COMPARE STRIP ─── */
-    .compare-strip {
-      background: var(--bg);
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-      padding: 36px 24px;
-      text-align: center;
+    /* ── Proof card ── */
+    .proof-card {
+      max-width: 760px; margin: 48px auto 0; text-align: left;
+      background: linear-gradient(180deg, var(--surface), var(--bg-soft));
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+      box-shadow: 0 30px 80px -40px rgba(0,0,0,0.8);
     }
+    .term-bar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); background: rgba(255,255,255,0.015); }
+    .term-bar .d { width: 11px; height: 11px; border-radius: 50%; }
+    .d.r { background: #ff5f57; } .d.y { background: #febc2e; } .d.g { background: #28c840; }
+    .term-bar .title { margin-left: 8px; font-family: var(--mono); font-size: 12.5px; color: var(--text-muted); }
+    .term-body { padding: 22px 22px 24px; font-family: var(--mono); font-size: 14px; line-height: 1.9; }
+    .vline { display: flex; gap: 12px; align-items: baseline; }
+    .vbadge { flex: none; font-weight: 600; font-size: 12px; letter-spacing: .03em; padding: 1px 0; min-width: 104px; }
+    .vbadge.ok { color: var(--accent); } .vbadge.bad { color: var(--red); } .vbadge.warn { color: var(--amber); }
+    .vtext.bad { color: var(--red); text-decoration: line-through; text-decoration-color: rgba(248,113,113,.6); }
+    .vtext.ok { color: var(--text); } .vtext.warn { color: #e8d8a8; }
+    .vreason { color: var(--text-muted); font-size: 12.5px; padding-left: 116px; margin-top: -4px; }
+    .term-rule { height: 1px; background: var(--border-soft); margin: 16px 0; }
+    .verdict { display: flex; gap: 22px; font-size: 13px; }
+    .verdict b { font-weight: 600; } .verdict .o { color: var(--accent); } .verdict .x { color: var(--red); } .verdict .w { color: var(--amber); }
+    .returns { margin-top: 14px; font-size: 13px; color: var(--text-muted); }
+    .returns .v { color: var(--accent); }
 
-    .compare-strip p {
-      font-family: var(--serif);
-      font-size: 17px;
-      font-weight: 300;
-      color: var(--text-dim);
-      line-height: 1.65;
-      max-width: 620px;
-      margin: 0 auto;
-    }
+    /* ── Section scaffolding ── */
+    .band { padding: 100px 0; }
+    .band.alt { background: var(--bg-soft); border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
+    .band h2 { max-width: 18ch; }
+    .band .lead { margin-top: 16px; }
 
-    .compare-strip a {
-      color: var(--emerald-glow);
-      text-decoration: none;
-      border-bottom: 1px solid rgba(16, 185, 129, 0.35);
-    }
+    /* ── How it works ── */
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 46px; }
+    .step { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+    .step .n { font-family: var(--mono); font-size: 13px; color: var(--accent); margin-bottom: 12px; }
+    .step h3 { font-size: 18px; margin-bottom: 8px; }
+    .step p { font-size: 14.5px; line-height: 1.6; }
+    @media (max-width: 760px) { .steps { grid-template-columns: 1fr; } }
 
-    .compare-strip a:hover {
-      color: var(--text);
-      border-bottom-color: var(--violet);
-    }
+    /* ── Anatomy ── */
+    .anatomy { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 44px; align-items: stretch; }
+    @media (max-width: 820px) { .anatomy { grid-template-columns: 1fr; } }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .panel-head { padding: 12px 18px; border-bottom: 1px solid var(--border-soft); font-family: var(--mono); font-size: 12.5px; color: var(--text-muted); }
+    .panel-body { padding: 20px; font-family: var(--mono); font-size: 13.5px; line-height: 1.75; }
+    .fm { color: var(--text-muted); }
+    .hl-span { background: rgba(52,211,153,0.12); border-bottom: 1px solid rgba(52,211,153,0.5); border-radius: 3px; padding: 1px 2px; color: #cdeede; }
+    .kv { display: grid; grid-template-columns: 96px 1fr; gap: 4px 14px; }
+    .kv .k { color: var(--text-muted); } .kv .v { color: var(--text); word-break: break-all; }
+    .kv .v.s { color: var(--violet); } .kv .v.g { color: var(--accent); }
+    .claim-tag { display: inline-block; font-size: 11px; color: var(--accent); border: 1px solid rgba(52,211,153,.35); border-radius: 999px; padding: 1px 9px; margin-bottom: 12px; }
 
-    /* ─── INSTALL ─── */
-    .install { background: var(--bg2); border-top: 1px solid var(--border); }
+    /* ── Feature grid ── */
+    .features { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 46px; }
+    @media (max-width: 980px) { .features { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
+    .feat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; transition: border-color .15s, transform .15s; }
+    .feat:hover { border-color: #2b3543; transform: translateY(-2px); }
+    .feat h3 { font-size: 16px; margin-bottom: 8px; }
+    .feat p { font-size: 13.5px; line-height: 1.6; }
+    .feat .ic { font-family: var(--mono); color: var(--accent); font-size: 15px; margin-bottom: 12px; }
 
-    .install-tabs {
-      display: flex;
-      gap: 0;
-      margin-top: 40px;
-      border-bottom: 1px solid var(--border);
-      flex-wrap: wrap;
-    }
+    /* ── Boundary / honesty box ── */
+    .boundary { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 44px; }
+    @media (max-width: 760px) { .boundary { grid-template-columns: 1fr; } }
+    .bbox { border-radius: var(--radius); padding: 24px; border: 1px solid var(--border); background: var(--surface); }
+    .bbox.is { border-color: rgba(52,211,153,0.25); }
+    .bbox h3 { font-size: 17px; margin-bottom: 10px; }
+    .bbox.is h3 { color: var(--accent); }
+    .bbox p { font-size: 14.5px; }
 
-    .tab {
-      padding: 10px 22px;
-      font-family: var(--mono);
-      font-size: 12px;
-      letter-spacing: 0.06em;
-      color: var(--text-dim);
-      cursor: pointer;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
-      background: none;
-      border-top: none;
-      border-left: none;
-      border-right: none;
-      transition: all 0.15s;
-    }
+    /* ── Compare strip ── */
+    .compare { text-align: center; }
+    .compare p { font-size: 16px; max-width: 720px; margin: 0 auto; }
+    .compare a { color: var(--accent); border-bottom: 1px solid rgba(52,211,153,.4); }
 
-    .tab.active {
-      color: var(--emerald-glow);
-      border-bottom-color: var(--emerald);
-    }
+    /* ── Install ── */
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 36px 0 16px; }
+    .tab { font-family: var(--sans); font-size: 14px; color: var(--text-dim); background: transparent; border: 1px solid var(--border); border-radius: 9px; padding: 8px 14px; cursor: pointer; transition: all .15s; }
+    .tab:hover { color: var(--text); border-color: #2b3543; }
+    .tab.active { color: #05231a; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+    .panel-code { position: relative; background: var(--bg-soft); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; font-family: var(--mono); font-size: 13.5px; line-height: 1.85; overflow-x: auto; }
+    .tab-panel { display: none; } .tab-panel.active { display: block; }
+    .panel-code .cmt { color: var(--text-muted); } .panel-code .kw { color: var(--accent); } .panel-code .str { color: var(--violet); }
+    .copy { position: absolute; top: 12px; right: 12px; font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; padding: 4px 10px; cursor: pointer; transition: all .15s; }
+    .copy:hover { color: var(--text); border-color: #2b3543; }
 
-    .tab:hover { color: var(--text); }
+    /* ── CTA + footer ── */
+    .cta { text-align: center; }
+    .cta h2 { font-size: clamp(30px, 4.5vw, 46px); }
+    footer { border-top: 1px solid var(--border-soft); padding: 40px 0; }
+    .foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px; }
+    .foot .brand { font-size: 17px; }
+    .foot-links { display: flex; flex-wrap: wrap; gap: 20px; font-size: 14px; }
+    .foot-links a { color: var(--text-dim); } .foot-links a:hover { color: var(--text); }
+    .foot-note { width: 100%; font-size: 13px; color: var(--text-muted); font-family: var(--mono); }
 
-    .tab-panel { display: none; padding: 28px 0; }
-    .tab-panel.active { display: block; }
-
-    .code-block {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      padding: 20px 24px;
-      font-size: 13px;
-      line-height: 1.85;
-      position: relative;
-      overflow-x: auto;
-    }
-
-    .code-block .comment { color: var(--text-muted); }
-    .code-block .keyword { color: var(--violet); }
-    .code-block .string  { color: var(--emerald-glow); }
-
-    .copy-btn {
-      position: absolute;
-      top: 12px;
-      right: 12px;
-      background: var(--bg3);
-      border: 1px solid var(--border);
-      color: var(--text-dim);
-      padding: 4px 10px;
-      font-family: var(--mono);
-      font-size: 10px;
-      cursor: pointer;
-      letter-spacing: 0.06em;
-      transition: all 0.15s;
-    }
-
-    .copy-btn:hover {
-      border-color: rgba(16, 185, 129, 0.5);
-      color: var(--emerald-glow);
-    }
-
-    /* ─── PIPELINE ─── */
-    .pipeline {
-      background: var(--bg);
-      border-top: 1px solid var(--border);
-    }
-
-    .pipeline-steps {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-      gap: 1px;
-      background: var(--border);
-      margin-top: 56px;
-    }
-
-    .pipeline-step {
-      background: var(--bg);
-      padding: 24px 22px;
-      position: relative;
-    }
-
-    .pipeline-step .step-num {
-      font-size: 10px;
-      color: var(--violet);
-      letter-spacing: 0.18em;
-      margin-bottom: 10px;
-    }
-
-    .pipeline-step h4 {
-      font-family: var(--display);
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--text);
-      margin-bottom: 8px;
-    }
-
-    .pipeline-step p {
-      font-family: var(--serif);
-      font-size: 14px;
-      font-weight: 300;
-      color: var(--text-dim);
-      line-height: 1.55;
-    }
-
-    .pipeline-step .step-tag {
-      position: absolute;
-      top: 12px;
-      right: 14px;
-      font-size: 10px;
-      letter-spacing: 0.08em;
-      color: var(--emerald);
-      opacity: 0.7;
-    }
-
-    /* ─── CONTRIB ─── */
-    .contrib {
-      background: var(--bg2);
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .contrib-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 24px;
-      margin-top: 44px;
-    }
-
-    .contrib-card {
-      border: 1px solid var(--border);
-      padding: 26px 24px;
-      background: var(--bg);
-      transition: border-color 0.2s, box-shadow 0.2s;
-    }
-
-    .contrib-card:hover {
-      border-color: rgba(16, 185, 129, 0.45);
-      box-shadow: 0 0 24px rgba(16, 185, 129, 0.06);
-    }
-
-    .contrib-card h3 {
-      font-size: 12px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--emerald);
-      margin-bottom: 10px;
-    }
-
-    .contrib-card p {
-      font-family: var(--serif);
-      font-size: 15px;
-      font-weight: 300;
-      color: var(--text-dim);
-      line-height: 1.65;
-    }
-
-    .contrib-card a {
-      color: var(--violet);
-      text-decoration: none;
-      border-bottom: 1px solid rgba(167, 139, 250, 0.4);
-    }
-
-    .contrib-card a:hover { color: var(--text); }
-
-    /* ─── CTA ─── */
-    .cta-section {
-      background: var(--bg);
-      text-align: center;
-      border-top: 1px solid var(--border);
-      position: relative;
-      overflow: hidden;
-    }
-
-    .cta-section::before {
-      content: 'MEMORA';
-      position: absolute;
-      font-family: var(--display);
-      font-weight: 700;
-      font-size: clamp(120px, 24vw, 280px);
-      color: rgba(16, 185, 129, 0.04);
-      letter-spacing: -0.04em;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      pointer-events: none;
-      white-space: nowrap;
-    }
-
-    .cta-section .section-title { margin-bottom: 12px; }
-    .cta-section .section-body  { margin: 0 auto 36px; text-align: center; max-width: 520px; }
-    .cta-actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
-
-    /* ─── FOOTER ─── */
-    footer {
-      background: var(--bg2);
-      border-top: 1px solid var(--border);
-      padding: 36px 24px;
-    }
-
-    .footer-inner {
-      max-width: 1120px;
-      margin: 0 auto;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 16px;
-    }
-
-    .footer-left {
-      display: flex;
-      align-items: baseline;
-      gap: 12px;
-    }
-
-    .footer-brand {
-      font-family: var(--display);
-      font-size: 18px;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      color: var(--text);
-    }
-
-    .footer-brand .fb-mem { color: var(--emerald-glow); }
-    .footer-brand .fb-ora { color: var(--violet); }
-
-    .footer-sub {
-      font-family: var(--serif);
-      font-size: 14px;
-      font-weight: 300;
-      font-style: italic;
-      color: var(--text-muted);
-    }
-
-    .footer-right {
-      display: flex;
-      gap: 22px;
-      flex-wrap: wrap;
-    }
-
-    .footer-right a {
-      font-size: 12px;
-      color: var(--text-muted);
-      text-decoration: none;
-      letter-spacing: 0.06em;
-      transition: color 0.15s;
-    }
-
-    .footer-right a:hover { color: var(--emerald-glow); }
-
-    /* ─── ANIMATIONS ─── */
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(20px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes blink {
-      0%, 100% { opacity: 1; }
-      50%      { opacity: 0; }
-    }
-
-    @keyframes pulseDot {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50%      { opacity: 0.45; transform: scale(0.85); }
-    }
-
-    @keyframes spanPulse {
-      0%, 100% { background: rgba(16, 185, 129, 0.13); }
-      50%      { background: rgba(16, 185, 129, 0.22); }
-    }
-
-    /* ─── RESPONSIVE ─── */
-    @media (max-width: 760px) {
-      nav { padding: 0 16px; }
-      .nav-links li:not(:last-child):not(:nth-child(-n+2)) { display: none; }
-      .hero { padding: 80px 16px 40px; }
-      .footer-inner { flex-direction: column; align-items: flex-start; }
-    }
+    .reveal { opacity: 0; transform: translateY(14px); transition: opacity .5s ease, transform .5s ease; }
+    .reveal.in { opacity: 1; transform: none; }
+    @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } html { scroll-behavior: auto; } }
   </style>
 </head>
 <body>
 
-<!-- NAV -->
 <nav>
-  <a class="nav-logo" href="#">
-    <span class="nav-name">Memora</span>
-    <span class="nav-version">v0.1.28</span>
-  </a>
-  <ul class="nav-links">
-    <li><a href="#anatomy">Anatomy</a></li>
-    <li><a href="#why">Why</a></li>
-    <li><a href="#showcase">Demo</a></li>
-    <li><a href="#install">Install</a></li>
-    <li><a href="#pipeline">Pipeline</a></li>
-    <li><a href="./docs/">Docs</a></li>
-    <li><a href="https://github.com/radotsvetkov/memora" class="nav-cta">GitHub →</a></li>
-  </ul>
+  <a class="brand" href="#top"><span class="dot"></span>memora<span class="ver">v0.1.28</span></a>
+  <div class="nav-links">
+    <a href="#how">How it works</a>
+    <a href="#proof">Proof</a>
+    <a href="#compare">Compare</a>
+    <a href="#install">Install</a>
+    <a href="./docs/">Docs</a>
+    <a class="nav-gh" href="https://github.com/radotsvetkov/memora">GitHub</a>
+  </div>
 </nav>
 
 <!-- HERO -->
-<section class="hero">
-  <div class="hero-grid"></div>
-  <div class="hero-glow"></div>
+<header class="hero" id="top">
+  <div class="container">
+    <div class="eyebrow">Local verification layer for AI memory</div>
+    <h1>Catch your AI citing sources that <span class="hl">don't say what it claims</span>.</h1>
+    <p class="lead">
+      Memora re-reads the exact source span behind every citation and recomputes its
+      hash. Anything the source does not actually contain is rejected before the answer
+      reaches you. One Rust binary, runs locally, works in Claude Desktop, Cursor, and
+      any MCP client.
+    </p>
+    <p class="promise">cite, or it didn't happen.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#install">Install memora</a>
+      <a class="btn btn-ghost" href="#proof">See the 10-second demo</a>
+      <a class="btn btn-ghost" href="https://github.com/radotsvetkov/memora">View on GitHub</a>
+    </div>
+    <div class="trust">
+      <span><b>100%</b> of fabricated citations rejected in the bundled eval</span>
+      <span class="sep">·</span>
+      <span><b>local-first</b> by default</span>
+      <span class="sep">·</span>
+      <span><b>single</b> Rust binary</span>
+      <span class="sep">·</span>
+      <span><b>Apache-2.0</b></span>
+    </div>
 
-  <pre class="hero-glyph"><span class="gd">┌─ vault ──────┐         ┌─ claim graph ─────────────┐         ┌─ validator ─┐</span>
-<span class="gd">│</span>  roadmap.md  <span class="gd">│</span>  <span class="ga">→</span>  <span class="gd">│</span>  <span class="gv">●</span>──<span class="gv">●</span>──<span class="gv">●</span>  subject·predicate <span class="gd">│</span>  <span class="ga">→</span>  <span class="gd">│</span>  <span style="color:var(--emerald-glow)">✓</span> verified  <span class="gd">│</span>
-<span class="gd">│</span>  meeting.md  <span class="gd">│</span>     <span class="gd">│</span>  <span class="gv">●</span>──<span class="gv">●</span>     fingerprint=blake3  <span class="gd">│</span>     <span class="gd">│</span>  <span style="color:var(--amber)">~</span> stale     <span class="gd">│</span>
-<span class="gd">│</span>  retro.md    <span class="gd">│</span>     <span class="gd">│</span>  <span class="gv">●</span>──<span class="gv">●</span>──<span class="gv">●</span>  span=142..198      <span class="gd">│</span>     <span class="gd">│</span>  <span style="color:var(--red)">✗</span> rejected  <span class="gd">│</span>
-<span class="gd">└──────────────┘         └────────────────────────────┘         └──────────────┘</span></pre>
-
-  <h1 class="hero-title"><span class="h-mem">Mem</span><span class="h-ora">ora</span></h1>
-
-  <p class="hero-tagline">Catch your AI citing sources that don't say what it claims.</p>
-  <p class="hero-promise">Cite <span class="sep">·</span> or it didn't happen.</p>
-
-  <div class="hero-pills">
-    <span class="pill pill-emerald">verified citations</span>
-    <span class="pill pill-emerald">claim graph</span>
-    <span class="pill pill-violet">privacy-banded</span>
-    <span class="pill">local-first</span>
-    <span class="pill">single binary</span>
-    <span class="pill">obsidian-native</span>
-    <span class="pill">mcp-native</span>
-  </div>
-
-  <div class="hero-actions">
-    <a href="#install" class="btn btn-primary">↓ Install</a>
-    <a href="./docs/" class="btn btn-secondary">Read the docs →</a>
-    <a href="#anatomy" class="btn btn-secondary">See a claim →</a>
-    <a href="https://github.com/radotsvetkov/memora" class="btn btn-secondary">GitHub</a>
-  </div>
-
-  <div class="terminal-wrap">
-    <div class="terminal">
-      <div class="terminal-bar">
-        <div class="dot dot-red"></div>
-        <div class="dot dot-yellow"></div>
-        <div class="dot dot-green"></div>
-        <span class="terminal-title">memora - ~/notes - claude-haiku - Anthropic</span>
-      </div>
-      <div class="terminal-body" id="hero-demo-body">
-        <div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">memora index --vault ~/notes</span></div>
-        <br>
-        <div class="t-output">Indexed: 87 notes, 312 claims extracted.</div>
-        <div class="t-output">Empty extractions: 4, Rate-limited: 0, Parse failures: 0, Invalid: 1.</div>
-        <div class="t-output">Total errors: 1 <span class="t-bar"></span></div>
+    <div class="proof-card reveal">
+      <div class="term-bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="title">memora demo</span></div>
+      <div class="term-body">
+        <div class="vline"><span class="vbadge ok">✓ VERIFIED</span><span class="vtext ok">We chose MessagePack for drift's serialization format.</span></div>
+        <div class="vreason">source verbatim contains this; hash matches</div>
+        <div class="vline" style="margin-top:14px"><span class="vbadge bad">✗ REJECTED</span><span class="vtext bad">The stack runs on PostgreSQL with three hot replicas.</span></div>
+        <div class="vreason">cited a claim id that does not exist (hallucinated)</div>
+        <div class="vline" style="margin-top:14px"><span class="vbadge warn">⚠ SUPERSEDED</span><span class="vtext warn">Auth uses short-lived JWTs.</span></div>
+        <div class="vreason">claim was retracted (valid_until has passed)</div>
+        <div class="term-rule"></div>
+        <div class="verdict"><span class="o"><b>1</b> verified</span><span class="x"><b>3</b> rejected</span><span class="w"><b>1</b> superseded</span></div>
+        <div class="returns">A naive tool returns all of it as fact. memora returns only what it could prove: <span class="v">"We chose MessagePack for drift's serialization format."</span></div>
       </div>
     </div>
   </div>
+</header>
+
+<!-- PROBLEM -->
+<section class="band">
+  <div class="container">
+    <div class="eyebrow">The problem</div>
+    <h2>Prompt-level "please cite your sources" does not survive a confident model.</h2>
+    <p class="lead">
+      RAG over notes, second-brain wrappers, and agent memory layers retrieve text and
+      then trust the model to quote it faithfully. When it invents a meeting, misquotes a
+      decision, or cites a source that does not contain the claim, there is no structural
+      defense. You catch the hallucination yourself, or you ship it.
+    </p>
+  </div>
 </section>
 
-<!-- CLAIM ANATOMY -->
-<section class="anatomy" id="anatomy">
+<!-- HOW IT WORKS -->
+<section class="band alt" id="how">
   <div class="container">
-    <div class="section-label">// the unit</div>
-    <h2 class="section-title">A claim is the smallest<br>thing you can verify.</h2>
-    <p class="section-body">
-      Most memory tools retrieve note chunks and ask the model to quote
-      them faithfully. Memora extracts atomic claims with byte-level
-      pointers back to your markdown, fingerprints the source span at
-      extraction, and re-checks the hash before any answer reaches you.
-    </p>
+    <div class="eyebrow">How it works</div>
+    <h2>Three steps, one guarantee.</h2>
+    <div class="steps">
+      <div class="step reveal">
+        <div class="n">01</div>
+        <h3>Extract atomic claims</h3>
+        <p>Memora turns prose into subject-predicate-object claims, each pinned to a byte-range span in your markdown and fingerprinted with a full-width blake3 hash.</p>
+      </div>
+      <div class="step reveal">
+        <div class="n">02</div>
+        <h3>The model cites claim IDs</h3>
+        <p>When it answers, the model references claims by ID. Retrieval is hybrid: BM25 plus vector search plus reciprocal-rank fusion over your claim graph.</p>
+      </div>
+      <div class="step reveal">
+        <div class="n">03</div>
+        <h3>Re-read, re-hash, reject</h3>
+        <p>The validator re-reads each cited span, recomputes the hash, and strips any citation that does not match. The model is retried with verified context only.</p>
+      </div>
+    </div>
 
-    <div class="anatomy-layout">
-      <!-- LEFT: markdown file -->
-      <div>
-        <div class="anatomy-col-label">Source · markdown in your vault</div>
-        <div class="md-file">
-          <div class="md-file-name">~/notes/semantic/projects/drift/roadmap.md</div>
-          <div class="md-frontmatter">---<br>title: drift Serialization Decision<br>region: projects/drift<br>privacy: private<br>updated: 2025-09-12<br>---</div>
-          <div class="md-prose">
-            ## serialization update<br><br>
-            <span class="md-span">drift switched serialization from JSON to MessagePack after benchmark runs showed 3x throughput.</span>
-            <br><br>
-            Source context appears in roadmap.md, retro-2025-q3.md, and meeting-2025-09-12.md.
-          </div>
-          <div style="height: 28px;"></div>
+    <div class="anatomy">
+      <div class="panel reveal">
+        <div class="panel-head">Source · markdown in your vault</div>
+        <div class="panel-body">
+          <div class="fm">--- <br>region: projects/drift<br>privacy: private<br>updated: 2025-09-12<br>---</div>
+          <br>## serialization update<br><br>
+          <span class="hl-span">drift switched serialization from JSON to MessagePack after benchmarks showed 3x throughput.</span>
         </div>
       </div>
-
-      <!-- ARROW -->
-      <div class="anatomy-arrow">
-        <div class="arrow-label">extract</div>
-        <div class="arrow-line"></div>
-        <div class="arrow-label">fingerprint</div>
-      </div>
-
-      <!-- RIGHT: claim card -->
-      <div>
-        <div class="anatomy-col-label">Claim · stored in SQLite + HNSW</div>
-        <div class="claim-card">
-          <div class="claim-card-id">
-            <span style="color:var(--violet);">claim:drf75a1c…</span>
-            <span class="verified-badge">verified</span>
-          </div>
-          <div class="claim-row">
-            <span class="claim-key">subject</span>
-            <span class="claim-val subj">drift</span>
-          </div>
-          <div class="claim-row">
-            <span class="claim-key">predicate</span>
-            <span class="claim-val pred">uses_serialization</span>
-          </div>
-          <div class="claim-row">
-            <span class="claim-key">object</span>
-            <span class="claim-val">messagepack</span>
-          </div>
-          <div class="claim-row">
-            <span class="claim-key">source</span>
-            <span class="claim-val span">roadmap.md</span>
-          </div>
-          <div class="claim-row">
-            <span class="claim-key">span</span>
-            <span class="claim-val span">184 .. 281 (97 bytes)</span>
-          </div>
-          <div class="claim-row">
-            <span class="claim-key">fingerprint</span>
-            <span class="claim-val fp">blake3:9a4e2f1c7b8d0a61...e3b92f7d</span>
-          </div>
-          <div class="claim-row">
-            <span class="claim-key">valid_from</span>
-            <span class="claim-val">2025-09-12</span>
-          </div>
-          <div class="claim-row">
-            <span class="claim-key">privacy</span>
-            <span class="claim-val priv">private</span>
+      <div class="panel reveal">
+        <div class="panel-head">Claim · stored in SQLite + HNSW</div>
+        <div class="panel-body">
+          <span class="claim-tag">verified</span>
+          <div class="kv">
+            <span class="k">subject</span><span class="v s">drift</span>
+            <span class="k">predicate</span><span class="v s">uses_serialization</span>
+            <span class="k">object</span><span class="v">messagepack</span>
+            <span class="k">source</span><span class="v">roadmap.md</span>
+            <span class="k">span</span><span class="v">184 .. 281</span>
+            <span class="k">fingerprint</span><span class="v g">blake3:9a4e2f1c…e3b92f7d</span>
+            <span class="k">valid_from</span><span class="v">2025-09-12</span>
+            <span class="k">privacy</span><span class="v">private</span>
           </div>
         </div>
       </div>
@@ -1193,442 +340,204 @@
   </div>
 </section>
 
-<!-- WHY -->
-<section class="why" id="why">
+<!-- PROOF -->
+<section class="band" id="proof">
   <div class="container">
-    <div class="section-label">// why memora</div>
-    <h2 class="section-title">Hallucinations are a<br>data-model problem.</h2>
-    <p class="section-body">
-      Prompt-level "please cite your sources" doesn't survive contact with
-      a confident model. Memora makes unsupported citations impossible to
-      surface, by construction.
+    <div class="eyebrow">Proof</div>
+    <h2>See it catch a hallucination in 10 seconds.</h2>
+    <p class="lead">
+      No vault, no API key, no network. <code style="color:var(--violet)">memora demo</code>
+      builds an ephemeral vault, feeds the real validator an AI answer containing one of
+      every kind of bad citation, and shows the verdict. It is the same check
+      <code style="color:var(--violet)">memora query</code> runs on every answer.
     </p>
-
-    <div class="why-grid">
-      <div class="why-card">
-        <span class="why-icon">◇</span>
-        <h3>Atomic claims</h3>
-        <p>Subject·predicate·object triples extracted from prose. The unit of memory is small enough to verify, large enough to reason over.</p>
-      </div>
-      <div class="why-card">
-        <span class="why-icon">◈</span>
-        <h3>Span fingerprint</h3>
-        <p>Every claim stores a blake3 hash of the exact source bytes. Edit the note, the hash changes, downstream uses re-validate or fall stale.</p>
-      </div>
-      <div class="why-card">
-        <span class="why-icon">✓</span>
-        <h3>Citation validator</h3>
-        <p>LLM emits <code style="color:var(--violet)">[claim:xxx]</code> markers. The validator re-reads the span, recomputes the hash, and rejects mismatches before output ships.</p>
-      </div>
-      <div class="why-card">
-        <span class="why-icon">↻</span>
-        <h3>Verified-only retry</h3>
-        <p>If the model invents a claim id, it gets stripped and re-prompted with verified-only context. The contract is enforced in code, not prompt.</p>
-      </div>
-      <div class="why-card">
-        <span class="why-icon">⏱</span>
-        <h3>Time-aware reasoning</h3>
-        <p>Claims have <code>valid_from</code> / <code>valid_until</code> windows. Contradictions auto-supersede. "What was true in March" is queryable.</p>
-      </div>
-      <div class="why-card">
-        <span class="why-icon">⊘</span>
-        <h3>Privacy bands</h3>
-        <p>Inline <code>&lt;!--privacy:secret--&gt;</code> markers narrow privacy to a sub-span. Secrets are redacted at the wire boundary, type-system enforced.</p>
-      </div>
-      <div class="why-card">
-        <span class="why-icon">▣</span>
-        <h3>Provenance DAG</h3>
-        <p>Synthesis claims point to the sources they derive from. Edit a leaf, downstream syntheses are auto-flagged stale until you re-confirm.</p>
-      </div>
-      <div class="why-card">
-        <span class="why-icon">⚙</span>
-        <h3>Local-first, single binary</h3>
-        <p>Rust + SQLite + HNSW. No Postgres, no Pinecone, no Node, no Python. Works offline with Ollama. Drop one binary into <code>/usr/local/bin</code>.</p>
+    <div class="proof-card reveal" style="margin-top:36px">
+      <div class="term-bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="title">$ memora demo</span></div>
+      <div class="term-body">
+        <div class="vline"><span class="vbadge ok">✓ VERIFIED</span><span class="vtext ok">We chose "MessagePack" for drift's serialization format.</span></div>
+        <div class="vreason">source verbatim contains this; hash matches</div>
+        <div class="vline" style="margin-top:13px"><span class="vbadge bad">✗ REJECTED</span><span class="vtext bad">The launch is "set for April 1".</span></div>
+        <div class="vreason">quoted text is not in the cited source span</div>
+        <div class="vline" style="margin-top:13px"><span class="vbadge bad">✗ REJECTED</span><span class="vtext bad">The stack runs on PostgreSQL with three hot replicas.</span></div>
+        <div class="vreason">cited a claim id that does not exist (hallucinated)</div>
+        <div class="vline" style="margin-top:13px"><span class="vbadge bad">✗ REJECTED</span><span class="vtext bad">The API "uses gRPC streaming".</span></div>
+        <div class="vreason">source span changed since extraction — hash mismatch</div>
+        <div class="vline" style="margin-top:13px"><span class="vbadge warn">⚠ SUPERSEDED</span><span class="vtext warn">Auth "uses short-lived JWTs".</span></div>
+        <div class="vreason">claim was superseded/retracted (valid_until has passed)</div>
+        <div class="term-rule"></div>
+        <div class="verdict"><span class="o"><b>1</b> verified</span><span class="x"><b>3</b> rejected</span><span class="w"><b>1</b> superseded</span></div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- LIVE FLOW -->
-<section class="showcase" id="showcase">
+<!-- WHY DIFFERENT -->
+<section class="band alt">
   <div class="container">
-    <div class="showcase-head">
-      <div class="live-badge"><span class="live-dot" aria-hidden="true"></span> Live preview</div>
-      <div class="section-label">// the contract in motion</div>
-      <h2 class="section-title" style="margin-bottom:16px">Watch a citation get tested.</h2>
-      <p class="section-body" style="max-width:600px;margin:0 auto;text-align:center">
-        Four frames cycle through a typical turn: capture the note,
-        extract the claim, query, and validate. The model never gets
-        the last word. The validator does.
-      </p>
+    <div class="eyebrow">Why memora</div>
+    <h2>Hallucinated citations are a data-model problem.</h2>
+    <div class="features">
+      <div class="feat reveal"><div class="ic">◇</div><h3>Atomic claims</h3><p>Subject-predicate-object triples, small enough to verify and large enough to reason over.</p></div>
+      <div class="feat reveal"><div class="ic">◈</div><h3>Span fingerprint</h3><p>A full-width blake3 hash of the exact source bytes. Edit the note and the hash changes.</p></div>
+      <div class="feat reveal"><div class="ic">✓</div><h3>Citation validator</h3><p>Re-reads each cited span, recomputes the hash, and rejects mismatches before output ships.</p></div>
+      <div class="feat reveal"><div class="ic">↻</div><h3>Verified-only retry</h3><p>Invented claim IDs are stripped, and the model is re-prompted with verified context only.</p></div>
+      <div class="feat reveal"><div class="ic">⏱</div><h3>Time-aware</h3><p>Claims carry valid_from and valid_until. Superseded claims are flagged, not asserted as current.</p></div>
+      <div class="feat reveal"><div class="ic">⊘</div><h3>Privacy bands</h3><p>Secret content is redacted at one type-enforced wire boundary before any cloud call.</p></div>
+      <div class="feat reveal"><div class="ic">▣</div><h3>Provenance + staleness</h3><p>Synthesis claims point to their sources. Edit a source and dependent claims fall stale.</p></div>
+      <div class="feat reveal"><div class="ic">⚙</div><h3>Local-first binary</h3><p>Rust, SQLite, and HNSW. No Postgres, no Pinecone, no Node. Fully offline with Ollama.</p></div>
     </div>
-    <div class="terminal-wrap terminal-live" style="max-width:820px;margin:0 auto">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-red"></div>
-          <div class="dot dot-yellow"></div>
-          <div class="dot dot-green"></div>
-          <span class="terminal-title">memora - live session preview</span>
-        </div>
-        <div class="terminal-body" id="live-demo-body"></div>
+
+    <div class="boundary">
+      <div class="bbox is reveal">
+        <h3>What it guarantees</h3>
+        <p>Provenance integrity. The cited source verbatim contains the quoted text and is unmodified, proven by hash. That is stricter than model-asserted citation APIs, which never re-read the source.</p>
       </div>
-      <p class="demo-caption" id="live-demo-caption">Step 1 - Capture a markdown note in your vault.</p>
+      <div class="bbox reveal">
+        <h3>What it does not</h3>
+        <p>Entailment. Memora verifies that the source <em>says</em> the quoted text, not that the quote <em>supports</em> your conclusion. We tell you exactly where the guarantee ends, because that line is the point.</p>
+      </div>
     </div>
   </div>
 </section>
 
-<!-- TRUST PIPELINE -->
-<section class="pipeline" id="pipeline">
+<!-- COMPARE -->
+<section class="band compare" id="compare">
   <div class="container">
-    <div class="section-label">// trust pipeline</div>
-    <h2 class="section-title">Six stages between<br>your vault and an answer.</h2>
-    <p class="section-body" style="max-width:680px">
-      Each stage is a typed boundary in Rust. The privacy filter is
-      compile-time enforced. The validator is the last gate before any
-      text reaches you.
+    <div class="eyebrow">How it compares</div>
+    <h2 style="margin:0 auto 18px;max-width:20ch">One claim no funded vendor makes.</h2>
+    <p>
+      Mem0, Zep, Letta, and Cognee store and recall memory well, but none re-read the
+      source and reject a citation whose bytes do not match. Anthropic's Citations API
+      asserts citations from the model without re-hashing them. Memora is behind on scale,
+      integrations, and ecosystem, and it would rather you knew.
+      <br><br>
+      <a href="./docs/comparison.html">Read the honest comparison →</a>
     </p>
-
-    <div class="pipeline-steps">
-      <div class="pipeline-step">
-        <span class="step-tag">Layer 1</span>
-        <div class="step-num">01</div>
-        <h4>Watch + parse</h4>
-        <p>Markdown vault watcher detects edits, parses frontmatter, queues extraction jobs.</p>
-      </div>
-      <div class="pipeline-step">
-        <span class="step-tag">Layer 2</span>
-        <div class="step-num">02</div>
-        <h4>Extract + fingerprint</h4>
-        <p>LLM extracts atomic claims with byte spans. Each claim gets a blake3 hash of the source.</p>
-      </div>
-      <div class="pipeline-step">
-        <span class="step-tag">Layer 3</span>
-        <div class="step-num">03</div>
-        <h4>Hybrid retrieval</h4>
-        <p>BM25 + HNSW vector search + RRF fusion + spreading activation over wikilinks.</p>
-      </div>
-      <div class="pipeline-step">
-        <span class="step-tag">Layer 3</span>
-        <div class="step-num">04</div>
-        <h4>Privacy filter</h4>
-        <p>Secret claims redacted at the wire boundary on cloud LLMs. Type-system enforced.</p>
-      </div>
-      <div class="pipeline-step">
-        <span class="step-tag">Layer 3</span>
-        <div class="step-num">05</div>
-        <h4>Validate citations</h4>
-        <p>Re-read each cited span, recompute fingerprint, reject mismatches. Strip + retry on failure.</p>
-      </div>
-      <div class="pipeline-step">
-        <span class="step-tag">Layer 4</span>
-        <div class="step-num">06</div>
-        <h4>MCP exposure</h4>
-        <p>14 tools over stdio. Drop into Claude Code, Cursor, or any MCP client.</p>
-      </div>
-    </div>
   </div>
-</section>
-
-<!-- COMPARE STRIP -->
-<section class="compare-strip" aria-label="Comparison with other tools">
-  <p>
-    Wondering how Memora differs from RAG, LLM Wiki, and other personal-memory tools?
-    <a href="./docs/comparison.html">Architectural comparison</a> - six systems, one matrix, no benchmark theater.
-  </p>
 </section>
 
 <!-- INSTALL -->
-<section class="install" id="install">
+<section class="band alt" id="install">
   <div class="container">
-    <div class="section-label">// get started</div>
-    <h2 class="section-title">Install in seconds.</h2>
-    <p class="section-body" style="max-width:680px;margin-top:12px">
-      A single Rust binary. No Node, no Python, no daemon. The installer
-      drops <code>memora</code> and <code>memora-mcp</code> on your path
-      so the CLI and the MCP server are ready immediately.
-    </p>
+    <div class="eyebrow">Get started</div>
+    <h2>Up and running in a minute.</h2>
+    <p class="lead" style="margin-top:14px">One binary, no daemon. Start with the offline demo, then point it at your own vault.</p>
 
-    <div class="install-tabs">
-      <button type="button" class="tab active" onclick="showTab('one-liner', this)">One-liner</button>
-      <button type="button" class="tab" onclick="showTab('source', this)">From source</button>
-      <button type="button" class="tab" onclick="showTab('mcp', this)">Claude Code MCP</button>
-      <button type="button" class="tab" onclick="showTab('ollama', this)">With Ollama (offline)</button>
+    <div class="tabs">
+      <button type="button" class="tab active" onclick="showTab('t-demo', this)">10-second demo</button>
+      <button type="button" class="tab" onclick="showTab('t-install', this)">Install</button>
+      <button type="button" class="tab" onclick="showTab('t-source', this)">From source</button>
+      <button type="button" class="tab" onclick="showTab('t-mcp', this)">Claude / Cursor (MCP)</button>
+      <button type="button" class="tab" onclick="showTab('t-ollama', this)">Offline (Ollama)</button>
     </div>
 
-    <div id="one-liner" class="tab-panel active">
-      <div class="code-block">
-        <button class="copy-btn" onclick="copy(this, 'curl --proto =https --tlsv1.2 -LsSf https://github.com/radotsvetkov/memora/releases/latest/download/memora-cli-installer.sh | sh')">copy</button>
-        <span class="comment"># Install memora + memora-mcp from the latest release</span><br>
-        curl --proto <span class="string">'=https'</span> --tlsv1.2 -LsSf \<br>
-        &nbsp;&nbsp;https://github.com/radotsvetkov/memora/releases/latest/download/memora-cli-installer.sh | sh<br>
-        <br>
-        <span class="comment"># Initialize a vault</span><br>
-        memora <span class="keyword">init</span> --vault ~/brain<br>
-        <br>
-        <span class="comment"># Index it</span><br>
-        memora <span class="keyword">index</span> --vault ~/brain<br>
-        <br>
-        <span class="comment"># Ask something - every cited claim gets validated</span><br>
-        memora <span class="keyword">query</span> <span class="string">"What did the team decide about drift's serialization format?"</span> --vault ~/brain
+    <div id="t-demo" class="tab-panel active">
+      <div class="panel-code">
+        <button class="copy" data-clip="memora demo">copy</button>
+        <span class="cmt"># No vault, no API key, no network. Watch it reject fabricated citations.</span><br>
+        memora <span class="kw">demo</span><br>
+        memora <span class="kw">demo</span> --open   <span class="cmt"># also opens an HTML Proof Report</span>
       </div>
     </div>
 
-    <div id="source" class="tab-panel">
-      <div class="code-block">
-        <button class="copy-btn" onclick="copy(this, 'git clone https://github.com/radotsvetkov/memora\ncd memora\ncargo build --release\ncp target/release/memora ~/bin/\ncp target/release/memora-mcp ~/bin/')">copy</button>
+    <div id="t-install" class="tab-panel">
+      <div class="panel-code">
+        <button class="copy" data-clip="curl --proto '=https' --tlsv1.2 -LsSf https://github.com/radotsvetkov/memora/releases/latest/download/memora-cli-installer.sh | sh">copy</button>
+        <span class="cmt"># Install memora + memora-mcp from the latest release</span><br>
+        curl --proto <span class="str">'=https'</span> --tlsv1.2 -LsSf \<br>
+        &nbsp;&nbsp;https://github.com/radotsvetkov/memora/releases/latest/download/memora-cli-installer.sh | sh<br><br>
+        <span class="cmt"># Or with cargo</span><br>
+        cargo <span class="kw">install</span> --path crates/memora-cli
+      </div>
+    </div>
+
+    <div id="t-source" class="tab-panel">
+      <div class="panel-code">
+        <button class="copy" data-clip="git clone https://github.com/radotsvetkov/memora&#10;cd memora&#10;cargo build --release">copy</button>
         git clone https://github.com/radotsvetkov/memora<br>
         cd memora<br>
-        <br>
-        <span class="comment"># Stable Rust, MSRV 1.75</span><br>
-        cargo build <span class="keyword">--release</span><br>
-        <br>
-        mkdir -p ~/bin<br>
-        cp target/release/memora ~/bin/<br>
-        cp target/release/memora-mcp ~/bin/
+        <span class="cmt"># Stable Rust, MSRV 1.75</span><br>
+        cargo build <span class="kw">--release</span>
       </div>
     </div>
 
-    <div id="mcp" class="tab-panel">
-      <div class="code-block">
-        <button class="copy-btn" onclick="copy(this, '{\n  &quot;mcpServers&quot;: {\n    &quot;memora&quot;: {\n      &quot;command&quot;: &quot;/usr/local/bin/memora-mcp&quot;,\n      &quot;env&quot;: { &quot;MEMORA_VAULT&quot;: &quot;/absolute/path/to/your/vault&quot; }\n    }\n  }\n}')">copy</button>
-        <span class="comment"># Add to your Claude Code MCP config</span><br>
+    <div id="t-mcp" class="tab-panel">
+      <div class="panel-code">
+        <button class="copy" data-clip='{ "mcpServers": { "memora": { "command": "/usr/local/bin/memora-mcp", "env": { "MEMORA_VAULT": "/absolute/path/to/your/vault" } } } }'>copy</button>
+        <span class="cmt"># Add to your Claude Desktop / Cursor MCP config</span><br>
         {<br>
-        &nbsp;&nbsp;<span class="string">"mcpServers"</span>: {<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"memora"</span>: {<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"command"</span>: <span class="string">"/usr/local/bin/memora-mcp"</span>,<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"env"</span>: {<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"MEMORA_VAULT"</span>: <span class="string">"/absolute/path/to/your/vault"</span><br>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}<br>
+        &nbsp;&nbsp;<span class="str">"mcpServers"</span>: {<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"memora"</span>: {<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"command"</span>: <span class="str">"/usr/local/bin/memora-mcp"</span>,<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"env"</span>: { <span class="str">"MEMORA_VAULT"</span>: <span class="str">"/path/to/your/vault"</span> }<br>
         &nbsp;&nbsp;&nbsp;&nbsp;}<br>
         &nbsp;&nbsp;}<br>
-        }<br>
-        <br>
-        <span class="comment"># 14 tools become available - query, capture, stale, contradictions, challenger, and more</span>
+        }
       </div>
     </div>
 
-    <div id="ollama" class="tab-panel">
-      <div class="code-block">
-        <span class="comment"># 1. Install Ollama and pull a small model</span><br>
+    <div id="t-ollama" class="tab-panel">
+      <div class="panel-code">
+        <button class="copy" data-clip="ollama pull llama3.2:3b&#10;ollama pull nomic-embed-text">copy</button>
+        <span class="cmt"># Fully local: pull a model and an embedder</span><br>
         ollama pull llama3.2:3b<br>
-        ollama pull <span class="string">nomic-embed-text</span>  <span class="comment"># for embeddings</span><br>
-        <br>
-        <span class="comment"># 2. Point Memora at Ollama in .memora/config.toml</span><br>
-        <span class="keyword">[llm]</span><br>
-        provider = <span class="string">"ollama"</span><br>
-        model = <span class="string">"llama3.2:3b"</span><br>
-        endpoint = <span class="string">"http://127.0.0.1:11434"</span><br>
-        <br>
-        <span class="comment"># 3. Query - fully offline, fully private</span><br>
-        memora <span class="keyword">query</span> <span class="string">"summarize this week's decisions"</span> --vault ~/brain
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- CONTRIB -->
-<section class="contrib" id="contribute">
-  <div class="container">
-    <div class="section-label">// community</div>
-    <h2 class="section-title">Built in the open.</h2>
-    <p class="section-body" style="max-width:640px">
-      Memora is Apache 2.0, friendly to internal forks, downstream
-      products, and agent experiments. Issues, docs fixes, and focused
-      PRs are welcome.
-    </p>
-    <div class="contrib-grid">
-      <div class="contrib-card">
-        <h3>Contribute</h3>
-        <p>Read the <a href="https://github.com/radotsvetkov/memora/blob/main/README.md">README</a>, run <code style="color:var(--violet)">cargo test --all</code>, and open a PR with a clear description.</p>
-      </div>
-      <div class="contrib-card">
-        <h3>Documentation</h3>
-        <p>The book covers the <a href="./docs/quickstart.html">quickstart</a>, <a href="./docs/architecture.html">architecture</a>, <a href="./docs/citation-protocol.html">citation protocol</a>, and <a href="./docs/mcp-tools.html">every MCP tool</a>. Help us keep examples sharp.</p>
-      </div>
-      <div class="contrib-card">
-        <h3>License</h3>
-        <p>Apache 2.0 only. See <a href="./docs/license.html">license notes</a> for why that fits personal-memory tooling.</p>
+        ollama pull <span class="str">nomic-embed-text</span><br><br>
+        <span class="cmt"># Point memora at Ollama in .memora/config.toml, then query offline</span><br>
+        memora <span class="kw">query</span> <span class="str">"summarize this week's decisions"</span> --vault ~/brain
       </div>
     </div>
   </div>
 </section>
 
 <!-- CTA -->
-<section class="cta-section" id="cta">
+<section class="band cta">
   <div class="container">
-    <div class="section-label">// get started</div>
-    <h2 class="section-title">Cite, or it didn't happen.</h2>
-    <p class="section-body">
-      The memory engine that respects your privacy, your markdown, and
-      your right to verify. Single binary. No subscription. Every claim
-      auditable.
-    </p>
-    <div class="cta-actions">
-      <a href="#install" class="btn btn-primary">↓ Install Memora</a>
-      <a href="./docs/" class="btn btn-secondary">Read the docs →</a>
-      <a href="./docs/quickstart.html" class="btn btn-secondary">Quickstart →</a>
-      <a href="./docs/architecture.html" class="btn btn-secondary">Architecture →</a>
-      <a href="https://github.com/radotsvetkov/memora" class="btn btn-secondary">View on GitHub</a>
+    <h2>Cite, or it didn't happen.</h2>
+    <p class="lead" style="margin:16px auto 28px">Verifiable memory for your notes and your agents. Single binary, no subscription, every citation auditable.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#install">Install memora</a>
+      <a class="btn btn-ghost" href="./docs/quickstart.html">Quickstart</a>
+      <a class="btn btn-ghost" href="./docs/architecture.html">Architecture</a>
+      <a class="btn btn-ghost" href="https://github.com/radotsvetkov/memora">GitHub</a>
     </div>
   </div>
 </section>
 
-<!-- FOOTER -->
 <footer>
-  <div class="footer-inner">
-    <div class="footer-left">
-      <span class="footer-brand"><span class="fb-mem">Mem</span><span class="fb-ora">ora</span></span>
-      <span class="footer-sub">v0.1.28 · cite, or it didn't happen.</span>
-    </div>
-    <div class="footer-right">
-      <a href="./docs/">Documentation</a>
+  <div class="container foot">
+    <a class="brand" href="#top"><span class="dot"></span>memora</a>
+    <div class="foot-links">
+      <a href="./docs/">Docs</a>
       <a href="./docs/quickstart.html">Quickstart</a>
-      <a href="./docs/comparison.html">Vs others</a>
+      <a href="./docs/comparison.html">Comparison</a>
       <a href="https://github.com/radotsvetkov/memora">GitHub</a>
       <a href="https://github.com/radotsvetkov/memora/releases">Releases</a>
       <a href="./docs/license.html">Apache-2.0</a>
     </div>
+    <div class="foot-note">v0.1.28 · provenance integrity, hash-proven · we tell you exactly where the guarantee ends.</div>
   </div>
 </footer>
 
 <script>
-  (function () {
-    const heroBody = document.getElementById('hero-demo-body');
-    if (heroBody) {
-      const heroFrames = [
-        {
-          duration: 8000,
-          html:
-            '<div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">memora index --vault ~/notes</span></div>' +
-            '<br>' +
-            '<div class="t-output">Indexed: 87 notes, 312 claims extracted.</div>' +
-            '<div class="t-output">Empty extractions: 4, Rate-limited: 0, Parse failures: 0, Invalid: 1.</div>' +
-            '<div class="t-output">Total errors: 1 <span class="t-bar"></span></div>'
-        },
-        {
-          duration: 12000,
-          html:
-            '<div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">cat ~/notes/projects/drift/_atlas.md</span></div>' +
-            '<br>' +
-            '<div class="t-output">Atlas: projects/drift</div>' +
-            '<div class="t-output">Recent decisions</div>' +
-            '<div class="t-output">drift: JSON to MessagePack (18 supporting claims across [[roadmap]], [[retro-2025-q3]], and 16 more)</div>' +
-            '<br>' +
-            '<div class="t-output">Stale dependencies</div>' +
-            '<div class="t-output">q4-rollout-plan depends on <span class="t-red">serialization-strategy-2024</span></div>' +
-            '<div class="t-output">which is superseded by <span class="t-emerald">serialization-strategy-2025-q3</span></div>' +
-            '<div class="t-output">(5 depends_on sources, 3 superseded_by sources) <span class="t-bar"></span></div>'
-        },
-        {
-          duration: 10000,
-          html:
-            '<div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">memora atlas --region projects/drift-bench</span></div>' +
-            '<br>' +
-            '<div class="t-output">Contradictions</div>' +
-            '<div class="t-output">drift-bench: language disagreement</div>' +
-            '<div class="t-output">rust (8 sources in projects/drift-bench)</div>' +
-            '<div class="t-output">go (12 sources in episodic/meetings)</div>' +
-            '<br>' +
-            '<div class="t-output">Open questions</div>' +
-            '<div class="t-output">drift: backpressure-strategy decision pending</div>' +
-            '<div class="t-output">(7 supporting claims across [[meeting-2025-q3-arch]], [[2025-10-design-review]], and 5 more) <span class="t-bar"></span></div>'
-        }
-      ];
-
-      let heroIndex = 0;
-      const renderHero = () => {
-        const frame = heroFrames[heroIndex];
-        heroBody.innerHTML = frame.html;
-        const wait = frame.duration;
-        heroIndex = (heroIndex + 1) % heroFrames.length;
-        setTimeout(renderHero, wait);
-      };
-      renderHero();
-    }
-
-    const cap = document.getElementById('live-demo-caption');
-    const body = document.getElementById('live-demo-body');
-    if (!body || !cap) return;
-
-    const frames = [
-      {
-        cap: 'Step 1 - Capture drift decision notes in the Helix Labs vault.',
-        html:
-          '<div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">cat &gt; semantic/projects/drift/roadmap.md</span></div>' +
-          '<div class="t-dim">  drift switched serialization from JSON to MessagePack in Q3.</div>' +
-          '<div class="t-dim">  Evidence: roadmap.md, retro-2025-q3.md, meeting-2025-09-12.md.</div>'
-      },
-      {
-        cap: 'Step 2 - Extraction stores typed claims and source fingerprints.',
-        html:
-          '<div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">memora index --vault ~/notes</span></div>' +
-          '<div class="t-output">  claim: drift | uses_serialization | messagepack</div>' +
-          '<div class="t-output">  span 184..281 · blake3 9a4e2f1c7b8d0a61...e3b92f7d</div>' +
-          '<div class="t-output">  linked to roadmap.md</div>'
-      },
-      {
-        cap: 'Step 3 - Query asks what the team decided about serialization.',
-        html:
-          '<div><span class="t-prompt">~/notes</span> <span class="t-dim">$</span> <span class="t-cmd">memora query "What did the team decide about drift\'s serialization format?"</span></div>' +
-          '<div class="t-output">  drift switched from JSON to MessagePack [claim:drf75a1c9e10b2aa]</div>'
-      },
-      {
-        cap: 'Step 4 - Validator confirms the cited claim against roadmap spans.',
-        html:
-          '<div class="t-output">  validator: claim drf75a1c9e10b2aa</div>' +
-          '<div class="t-verified">  ✓ roadmap.md @ 184..281 fingerprint match</div>' +
-          '<div class="t-output">  answer returned with verified citation</div>'
-      }
-    ];
-
-    let i = 0;
-    function render() {
-      const f = frames[i % frames.length];
-      body.innerHTML = f.html;
-      cap.textContent = f.cap;
-      i += 1;
-    }
-    render();
-    setInterval(render, 4200);
-  })();
-
   function showTab(id, btn) {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.getElementById(id).classList.add('active');
     if (btn) btn.classList.add('active');
   }
-
-  function copy(btn, text) {
-    navigator.clipboard.writeText(text).then(() => {
-      const orig = btn.textContent;
-      btn.textContent = 'copied!';
-      btn.style.color = 'var(--emerald-glow)';
-      btn.style.borderColor = 'rgba(16,185,129,0.5)';
-      setTimeout(() => {
-        btn.textContent = orig;
-        btn.style.color = '';
-        btn.style.borderColor = '';
-      }, 1800);
+  document.querySelectorAll('.copy').forEach(btn => {
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(btn.getAttribute('data-clip')).then(() => {
+        const o = btn.textContent; btn.textContent = 'copied'; btn.style.color = 'var(--accent)';
+        setTimeout(() => { btn.textContent = o; btn.style.color = ''; }, 1500);
+      });
     });
-  }
-
-  const observer = new IntersectionObserver(
-    entries => entries.forEach(e => {
-      if (e.isIntersecting) {
-        e.target.style.opacity = '1';
-        e.target.style.transform = 'translateY(0)';
-      }
-    }),
-    { threshold: 0.1, rootMargin: '0px 0px -40px 0px' }
-  );
-
-  document.querySelectorAll('.why-card, .pipeline-step, .contrib-card').forEach(el => {
-    el.style.opacity = '0';
-    el.style.transform = 'translateY(16px)';
-    el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
-    observer.observe(el);
   });
+  const io = new IntersectionObserver(
+    es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }),
+    { threshold: 0.12, rootMargin: '0px 0px -40px 0px' }
+  );
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
 </script>
 </body>
 </html>

@@ -25,3 +25,6 @@ PRECHECK-FAIL.md
 # mdBook output
 docs/book/
 _site/
+
+# Local preview / launch config
+.claude/

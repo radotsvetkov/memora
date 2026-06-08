@@ -14,6 +14,7 @@
 - CLI cloud LLM and embedding calls are gated behind `MEMORA_ENABLE_NETWORK_LLM=1` (parity with MCP); a config line can no longer silently route content off-machine.
 - Secret-claim subjects are redacted (not only predicate/object) before cloud calls.
 - Repositioned README, docs, and landing page around verifiable citation rejection; dropped the "cognitive memory" framing; added an explicit "provenance integrity, not entailment" boundary; rewrote the comparison to confront Mem0/Zep/Letta/Cognee and the Anthropic Citations API honestly.
+- Rebuilt the landing page with a cleaner, professional design (sans body type, restrained palette, accurate copy, an honest static render of `memora demo`) and polished the README to feature the demo and read more naturally.
 
 ### Fixed
 - First-run `database is locked` noise: establish WAL mode on a single connection before the pool opens connections concurrently, so they don't race the journal-mode switch on a fresh db.
