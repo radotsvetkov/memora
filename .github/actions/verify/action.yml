@@ -1,0 +1,35 @@
+name: "Memora Verify"
+description: "Fail the build if an AI answer cites sources it cannot prove. CI for hallucinations."
+branding:
+  icon: "check-circle"
+  color: "green"
+
+inputs:
+  file:
+    description: "Path to the answer file to verify (contains [claim:ID] markers)."
+    required: true
+  vault:
+    description: "Path to the memora vault to verify against."
+    required: true
+  allow-superseded:
+    description: "Do not fail the build on superseded citations (provenance intact, claim retracted)."
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install memora
+      shell: bash
+      run: |
+        curl --proto '=https' --tlsv1.2 -LsSf \
+          https://github.com/radotsvetkov/memora/releases/latest/download/memora-cli-installer.sh | sh
+
+    - name: Verify citations
+      shell: bash
+      run: |
+        extra=""
+        if [ "${{ inputs.allow-superseded }}" = "true" ]; then
+          extra="--allow-superseded"
+        fi
+        memora verify --vault "${{ inputs.vault }}" $extra "${{ inputs.file }}"

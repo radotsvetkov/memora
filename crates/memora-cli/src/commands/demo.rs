@@ -18,6 +18,8 @@ use memora_core::{
     Privacy,
 };
 
+use super::verdict::{self, RenderOpts, VerdictLine};
+
 #[derive(Debug, Args)]
 pub struct DemoArgs {
     /// Write a standalone HTML "Proof Report" and print its path.
@@ -82,36 +84,30 @@ Auth uses short-lived JWTs.";
         Seed::Superseded,
     )?;
 
-    // The "AI answer" — exactly the kind of confident output you'd get from a model.
-    // Each line cites a claim; together they exercise every verification outcome.
+    // The "AI answer": confident output, with one of every kind of bad citation.
     let lines = [
-        Line::new(
+        (
             "We chose \"MessagePack\" for drift's serialization format [claim:0000000000000a01].",
             "0000000000000a01",
         ),
-        Line::new(
+        (
             "The launch is \"set for April 1\" [claim:0000000000000a02].",
             "0000000000000a02",
         ),
-        Line::new(
+        (
             "The stack runs on PostgreSQL with three hot replicas [claim:0000000000dead01].",
             "0000000000dead01",
         ),
-        Line::new(
+        (
             "The API \"uses gRPC streaming\" [claim:0000000000000a03].",
             "0000000000000a03",
         ),
-        Line::new(
+        (
             "Auth \"uses short-lived JWTs\" [claim:0000000000000a04].",
             "0000000000000a04",
         ),
     ];
-
-    let answer_text = lines
-        .iter()
-        .map(|l| l.text.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
+    let answer_text = lines.iter().map(|(t, _)| *t).collect::<Vec<_>>().join(" ");
 
     let validator = CitationValidator {
         store: &store,
@@ -120,7 +116,6 @@ Auth uses short-lived JWTs.";
     };
     let result = validator.validate(&answer_text).await?;
 
-    // Map each cited claim id to its verdict (each id appears once).
     let status_of = |claim_id: &str| -> CitationStatus {
         result
             .checks
@@ -129,39 +124,34 @@ Auth uses short-lived JWTs.";
             .map(|c| c.status)
             .unwrap_or(CitationStatus::Unverified)
     };
-    let source_of = |claim_id: &str| -> Option<String> {
-        result
-            .checks
-            .iter()
-            .find(|c| c.claim_id == claim_id)
-            .and_then(|c| c.source_text.clone())
-    };
-
-    let verdicts: Vec<Verdict> = lines
+    let verdict_lines: Vec<VerdictLine> = lines
         .iter()
-        .map(|l| Verdict {
-            text: l.text.clone(),
-            status: status_of(&l.claim_id),
-            source: source_of(&l.claim_id),
+        .map(|(text, id)| VerdictLine {
+            text: text.to_string(),
+            status: status_of(id),
         })
         .collect();
 
-    render_terminal(&verdicts, &result.clean_text, &answer_text);
+    println!();
+    println!("memora demo — an AI answer, re-checked against the source");
+    println!("no API key · no network · nothing mocked (the real validator runs)\n");
+    verdict::render_terminal(
+        &verdict_lines,
+        &result.clean_text,
+        &answer_text,
+        &RenderOpts {
+            color: verdict::color_enabled(),
+            show_naive_contrast: true,
+        },
+    );
 
     if args.html || args.open {
-        let path = temp
-            .path()
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("memora-proof-report.html");
-        // tempdir is removed on drop, so write the report outside it.
         let report_path = std::env::temp_dir().join("memora-proof-report.html");
         fs::write(
             &report_path,
-            render_html(&verdicts, &result.clean_text, &answer_text),
+            verdict::render_html(&verdict_lines, &result.clean_text),
         )?;
         println!("\nProof Report written to: {}", report_path.display());
-        let _ = path; // keep intent clear; we use a stable temp path
         if args.open {
             open_in_browser(&report_path);
         }
@@ -170,228 +160,18 @@ Auth uses short-lived JWTs.";
     Ok(())
 }
 
-struct Line {
-    text: String,
-    claim_id: String,
-}
-
-impl Line {
-    fn new(text: &str, claim_id: &str) -> Self {
-        Self {
-            text: text.to_string(),
-            claim_id: claim_id.to_string(),
-        }
-    }
-}
-
-struct Verdict {
-    text: String,
-    status: CitationStatus,
-    source: Option<String>,
-}
-
-fn color_enabled() -> bool {
-    std::env::var_os("NO_COLOR").is_none()
-}
-
-fn c(code: &str, s: &str) -> String {
-    if color_enabled() {
-        format!("\x1b[{code}m{s}\x1b[0m")
-    } else {
-        s.to_string()
-    }
-}
-
-fn strike(s: &str) -> String {
-    if color_enabled() {
-        format!("\x1b[9m\x1b[31m{s}\x1b[0m")
-    } else {
-        format!("[REJECTED] {s}")
-    }
-}
-
-/// Plain-English reason a citation was rejected (or flagged).
-fn reason(status: CitationStatus) -> &'static str {
-    match status {
-        CitationStatus::Verified => "source verbatim contains this; hash matches",
-        CitationStatus::Unverified => "cited a claim id that does not exist (hallucinated)",
-        CitationStatus::FingerprintMismatch => {
-            "source span changed since extraction — hash mismatch"
-        }
-        CitationStatus::QuoteMismatch => "quoted text is not in the cited source span",
-        CitationStatus::Superseded => "claim was superseded/retracted (valid_until has passed)",
-    }
-}
-
-fn badge(status: CitationStatus) -> String {
-    match status {
-        CitationStatus::Verified => c("1;32", "✓ VERIFIED  "),
-        CitationStatus::Superseded => c("1;33", "⚠ SUPERSEDED"),
-        _ => c("1;31", "✗ REJECTED  "),
-    }
-}
-
-fn render_terminal(verdicts: &[Verdict], clean_text: &str, raw_text: &str) {
-    let mut verified = 0usize;
-    let mut rejected = 0usize;
-    let mut superseded = 0usize;
-
-    println!();
-    println!(
-        "{}",
-        c(
-            "1",
-            "memora demo — an AI answer, re-checked against the source"
-        )
-    );
-    println!(
-        "{}",
-        c(
-            "2",
-            "no API key · no network · nothing mocked (the real validator runs)"
-        )
-    );
-    println!();
-
-    for v in verdicts {
-        match v.status {
-            CitationStatus::Verified => verified += 1,
-            CitationStatus::Superseded => superseded += 1,
-            _ => rejected += 1,
-        }
-        println!("{}  {}", badge(v.status), c("2", reason(v.status)));
-        let shown = match v.status {
-            CitationStatus::Verified => c("32", &v.text),
-            CitationStatus::Superseded => c("33", &v.text),
-            _ => strike(&v.text),
-        };
-        println!("   {shown}");
-        if v.status == CitationStatus::Verified {
-            if let Some(src) = &v.source {
-                println!("   {} {}", c("2", "source:"), c("2", src));
-            }
-        }
-        println!();
-    }
-
-    println!("{}", c("1", "Verdict"));
-    println!(
-        "  {}   {}   {}",
-        c("1;32", &format!("{verified} verified")),
-        c("1;31", &format!("{rejected} rejected")),
-        c("1;33", &format!("{superseded} superseded")),
-    );
-    println!();
-    println!(
-        "{}",
-        c(
-            "2",
-            "A naive RAG/prompt-cite tool would have shown you all of this as fact:"
-        )
-    );
-    println!("   {}", c("2", &one_line(raw_text)));
-    println!();
-    println!(
-        "{}",
-        c(
-            "1",
-            "What memora actually returns (only what it could prove):"
-        )
-    );
-    let clean = if clean_text.trim().is_empty() {
-        "(nothing — none of the citations could be verified)".to_string()
-    } else {
-        one_line(clean_text)
-    };
-    println!("   {}", c("32", &clean));
-    println!();
-    println!(
-        "{}",
-        c("2", "Run `memora demo --open` for an HTML Proof Report. This is the same check `memora query` runs on every answer.")
-    );
-}
-
-fn one_line(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn render_html(verdicts: &[Verdict], clean_text: &str, raw_text: &str) -> String {
-    let mut cards = String::new();
-    for v in verdicts {
-        let (cls, label) = match v.status {
-            CitationStatus::Verified => ("ok", "VERIFIED"),
-            CitationStatus::Superseded => ("warn", "SUPERSEDED"),
-            CitationStatus::Unverified => ("bad", "REJECTED — hallucinated id"),
-            CitationStatus::FingerprintMismatch => ("bad", "REJECTED — hash mismatch"),
-            CitationStatus::QuoteMismatch => ("bad", "REJECTED — quote not in source"),
-        };
-        let text = html_escape(&v.text);
-        let text = if matches!(
-            v.status,
-            CitationStatus::Verified | CitationStatus::Superseded
-        ) {
-            text
-        } else {
-            format!("<s>{text}</s>")
-        };
-        let src = v
-            .source
-            .as_deref()
-            .map(|s| format!("<div class=\"src\">source: {}</div>", html_escape(s)))
-            .unwrap_or_default();
-        cards.push_str(&format!(
-            "<div class=\"card {cls}\"><span class=\"label\">{label}</span><div class=\"sentence\">{text}</div><div class=\"reason\">{}</div>{src}</div>\n",
-            html_escape(reason(v.status))
-        ));
-    }
-    let clean = if clean_text.trim().is_empty() {
-        "(nothing — none of the citations could be verified)".to_string()
-    } else {
-        html_escape(&one_line(clean_text))
-    };
-    format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Memora Proof Report</title>\
-<style>\
-:root{{color-scheme:dark}}body{{font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;background:#0b0f14;color:#e6edf3;max-width:760px;margin:40px auto;padding:0 20px}}\
-h1{{font-size:22px}}.sub{{color:#8b949e;margin-bottom:24px}}\
-.card{{border-left:4px solid #30363d;background:#11161d;border-radius:8px;padding:14px 16px;margin:12px 0}}\
-.card.ok{{border-color:#2ea043}}.card.bad{{border-color:#f85149}}.card.warn{{border-color:#d29922}}\
-.label{{font-size:12px;font-weight:700;letter-spacing:.04em}}.card.ok .label{{color:#3fb950}}.card.bad .label{{color:#ff7b72}}.card.warn .label{{color:#e3b341}}\
-.sentence{{margin:6px 0;font-size:17px}}.sentence s{{color:#ff7b72;text-decoration-color:#f85149}}\
-.reason{{color:#8b949e;font-size:14px}}.src{{color:#6e7681;font-size:13px;margin-top:6px;font-family:ui-monospace,monospace}}\
-.final{{margin-top:28px;padding:16px;background:#0d1117;border:1px solid #30363d;border-radius:8px}}\
-.final .k{{color:#8b949e;font-size:13px}}.final .v{{color:#3fb950;margin-top:6px}}\
-</style></head><body>\
-<h1>Memora Proof Report</h1>\
-<div class=\"sub\">Every citation in an AI answer, re-read against the source span and re-hashed. No API key, nothing mocked.</div>\
-{cards}\
-<div class=\"final\"><div class=\"k\">A naive tool returns all of the above as fact. memora returns only what it could prove:</div><div class=\"v\">{clean}</div></div>\
-<p class=\"sub\" style=\"margin-top:24px\">Raw model answer: {}</p>\
-</body></html>",
-        html_escape(&one_line(raw_text))
-    )
-}
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
 fn open_in_browser(path: &Path) {
-    let cmd = if cfg!(target_os = "macos") {
-        Some(("open", vec![path.as_os_str().to_owned()]))
+    let (bin, args): (&str, Vec<std::ffi::OsString>) = if cfg!(target_os = "macos") {
+        ("open", vec![path.as_os_str().to_owned()])
     } else if cfg!(target_os = "windows") {
-        Some((
+        (
             "cmd",
             vec!["/C".into(), "start".into(), path.as_os_str().to_owned()],
-        ))
+        )
     } else {
-        Some(("xdg-open", vec![path.as_os_str().to_owned()]))
+        ("xdg-open", vec![path.as_os_str().to_owned()])
     };
-    if let Some((bin, cmd_args)) = cmd {
-        let _ = std::process::Command::new(bin).args(cmd_args).status();
-    }
+    let _ = std::process::Command::new(bin).args(args).status();
 }
 
 fn seed_note(vault: &Path, index: &Index, rel: &str, id: &str, body: &str) -> Result<()> {
@@ -437,7 +217,6 @@ fn seed_claim(
     let span_start = body
         .find(span_text)
         .with_context(|| format!("span '{span_text}' not found in demo body"))?;
-    let span_end = span_start + span_text.len();
     let fingerprint = match seed {
         Seed::StaleFingerprint => Claim::compute_fingerprint(&format!("{span_text} (old)")),
         _ => Claim::compute_fingerprint(span_text),
@@ -446,14 +225,14 @@ fn seed_claim(
         Seed::Superseded => Some(Utc::now() - Duration::days(30)),
         _ => None,
     };
-    let claim = Claim {
+    store.upsert(&Claim {
         id: id.to_string(),
         subject: "demo".to_string(),
         predicate: "states".to_string(),
         object: Some("fact".to_string()),
         note_id: note_id.to_string(),
         span_start,
-        span_end,
+        span_end: span_start + span_text.len(),
         span_fingerprint: fingerprint,
         valid_from: Utc
             .with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
@@ -467,7 +246,6 @@ fn seed_claim(
             .with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
             .single()
             .expect("date"),
-    };
-    store.upsert(&claim)?;
+    })?;
     Ok(())
 }

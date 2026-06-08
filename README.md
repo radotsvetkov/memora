@@ -95,7 +95,26 @@ let answer = memora.validate("drift uses MessagePack [claim:0123456789abcdef].")
 println!("{} verified, {} rejected", answer.verified_count, answer.unverified_count);
 ```
 
-`validate` is pure verification: no network, no LLM. `search` and `claim` are also available. This is the surface a future agent SDK and a CI action will build on.
+`validate` is pure verification: no network, no LLM. `search` and `claim` are also available.
+
+## Verify in CI
+
+`memora verify` checks an AI answer's citations against a vault and exits non-zero if any cannot be proven, so a pipeline fails the build when a model cites something the source does not contain.
+
+```bash
+memora verify --vault ~/your-vault answer.txt   # human verdict, exit 1 on failure
+memora verify --vault ~/your-vault --json answer.txt | jq .problems
+echo "drift uses MessagePack [claim:0123456789abcdef]." | memora verify --vault ~/your-vault
+```
+
+A reusable GitHub Action ships in this repo:
+
+```yaml
+- uses: radotsvetkov/memora/.github/actions/verify@main
+  with:
+    vault: ./vault
+    file: ./agent-output.txt
+```
 
 ## Recommended models
 

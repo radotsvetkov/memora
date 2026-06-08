@@ -8,4 +8,6 @@ pub mod init;
 pub mod privacy;
 pub mod query;
 pub mod serve;
+pub mod verdict;
+pub mod verify;
 pub mod watch;

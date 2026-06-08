@@ -17,6 +17,8 @@ struct Cli {
 enum Commands {
     /// Zero-config offline demo: watch memora catch a fabricated citation.
     Demo(commands::demo::DemoArgs),
+    /// Verify an AI answer's citations against a vault; exit non-zero on failure.
+    Verify(commands::verify::VerifyArgs),
     Init(commands::init::InitArgs),
     Index(commands::index::IndexArgs),
     Watch(commands::watch::WatchArgs),
@@ -47,6 +49,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Demo(args) => commands::demo::run(args).await?,
+        Commands::Verify(args) => commands::verify::run(args).await?,
         Commands::Init(args) => commands::init::run(args)?,
         Commands::Index(args) => commands::index::run(args).await?,
         Commands::Watch(args) => commands::watch::run(args).await?,
