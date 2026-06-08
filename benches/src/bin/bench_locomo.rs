@@ -20,10 +20,13 @@ async fn main() -> Result<()> {
     for line in content.lines().filter(|line| !line.trim().is_empty()) {
         rows.push(serde_json::from_str::<LocomoSample>(line)?);
     }
-    let total = rows.len() as f32;
-    let retrieval_at_k = if total == 0.0 { 0.0 } else { 1.0 };
-    println!("LoCoMo subset rows: {}", rows.len());
-    println!("retrieval@k: {:.3}", retrieval_at_k);
+    // NOTE: this binary only lists the fixture queries. It does NOT score
+    // retrieval — there is no indexed corpus to retrieve against here, so any
+    // retrieval@k value would be fabricated. (A previous version hardcoded
+    // retrieval@k = 1.0 for any non-empty fixture; that has been removed.)
+    // To actually score LoCoMo, build an index from the source corpus and run
+    // the real retriever over each query, comparing against expected_note_id.
+    println!("LoCoMo subset rows: {} (fixture listing only; not scored)", rows.len());
     println!("queries:");
     for row in rows {
         println!("- {} => {}", row.query, row.expected_note_id);

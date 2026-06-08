@@ -1,14 +1,27 @@
-//! Placeholder benchmark binary — run against a real vault with `cargo run -p memora-bench --bin bench_personal_vault`.
+//! Personal-vault quality harness — NOT YET IMPLEMENTED.
+//!
+//! This binary intentionally emits NO quality numbers. Retrieval accuracy,
+//! contradiction precision/recall, and privacy-leak rate over a real personal
+//! vault depend on a labeled corpus and live LLM extraction, which this repo
+//! does not yet ship. Printing placeholder constants here previously created the
+//! false impression of measured results; that has been removed.
+//!
+//! For the one core metric that IS measured deterministically (and needs no
+//! API key), run:
+//!
+//!   cargo run -p memora-bench --release --bin bench_citation_rejection
+//!
+//! To build the full personal-vault harness, wire this to: a fixed labeled
+//! vault, the real index/extract/retrieve pipeline, and gold annotations, then
+//! report metrics with their methodology.
 use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    eprintln!("bench_personal_vault is a placeholder; wire to a real vault evaluation harness.");
-    println!("personal_vault_notes: 500");
-    println!("retrieval_accuracy: 0.82");
-    println!("citation_verified_rate: 0.94");
-    println!("privacy_leak_rate: 0.00");
-    println!("contradiction_precision: 0.88");
-    println!("contradiction_recall: 0.79");
+    eprintln!(
+        "bench_personal_vault is not implemented and emits no metrics.\n\
+         Run `cargo run -p memora-bench --release --bin bench_citation_rejection` \
+         for the measured citation-rejection metric."
+    );
     Ok(())
 }

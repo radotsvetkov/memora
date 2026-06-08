@@ -17,6 +17,10 @@ eula = false
 dist = false
 
 [[bin]]
+name = "bench_citation_rejection"
+path = "src/bin/bench_citation_rejection.rs"
+
+[[bin]]
 name = "bench_locomo"
 path = "src/bin/bench_locomo.rs"
 
