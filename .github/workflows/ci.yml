@@ -25,3 +25,17 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: test
         run: cargo test --all --all-features
+      - name: citation-rejection gate
+        # The core guarantee, measured deterministically (no API key). Exits
+        # non-zero if any fabricated citation is not rejected.
+        run: cargo run -p memora-bench --bin bench_citation_rejection
+
+  deny:
+    name: Supply chain (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources

@@ -1,0 +1,54 @@
+# cargo-deny configuration. Run locally with `cargo deny check`.
+# Enforced in CI to keep the dependency tree free of known-vulnerable,
+# yanked, or non-permissively-licensed crates.
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+  # `paste` is unmaintained (RUSTSEC-2024-0436) but is only pulled in
+  # transitively (fastembed -> tokenizers, rmcp, rav1e). It is a compile-time
+  # proc-macro helper with no runtime/security impact and no upstream fix.
+  "RUSTSEC-2024-0436",
+  # `bincode` 1.3.3 is unmaintained by the maintainers' own decision
+  # (RUSTSEC-2025-0141); they consider 1.3.3 feature-complete. Pulled
+  # transitively (hnsw_rs). No vulnerability, no action needed.
+  "RUSTSEC-2025-0141",
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# Permissive licenses only. Anything outside this list fails the check.
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "MIT",
+  "MIT-0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "ISC",
+  "CC0-1.0",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "Unlicense",
+  "Zlib",
+  "CDLA-Permissive-2.0",
+]
+# Narrowly-scoped exceptions for two transitive weak-copyleft crates.
+exceptions = [
+  # File-level copyleft, fine to depend on. Pulled by `dirs`.
+  { allow = ["MPL-2.0"], name = "option-ext" },
+  # UEFI runtime crate, only compiled for UEFI targets (never our binaries).
+  { allow = ["LGPL-2.1-or-later"], name = "r-efi" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
