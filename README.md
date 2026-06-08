@@ -134,10 +134,11 @@ Indexing a 100-note vault costs about $0.30 and takes roughly 5 to 10 minutes at
 
 ## Quickstart
 
-Install from crates.io, or download a release binary:
+Install with Homebrew, cargo, or a release binary:
 
 ```bash
-cargo install memora-cli
+brew install radotsvetkov/memora/memora   # macOS and Linux
+cargo install memora-cli                   # any platform with Rust
 ```
 
 Configure `~/.config/memora/config.toml`:

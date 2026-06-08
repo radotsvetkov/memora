@@ -442,12 +442,14 @@
 
     <div id="t-install" class="tab-panel">
       <div class="panel-code">
-        <button class="copy" data-clip="curl --proto '=https' --tlsv1.2 -LsSf https://github.com/radotsvetkov/memora/releases/latest/download/memora-cli-installer.sh | sh">copy</button>
-        <span class="cmt"># Install memora + memora-mcp from the latest release</span><br>
-        curl --proto <span class="str">'=https'</span> --tlsv1.2 -LsSf \<br>
-        &nbsp;&nbsp;https://github.com/radotsvetkov/memora/releases/latest/download/memora-cli-installer.sh | sh<br><br>
+        <button class="copy" data-clip="brew install radotsvetkov/memora/memora">copy</button>
+        <span class="cmt"># Homebrew (macOS and Linux)</span><br>
+        brew <span class="kw">install</span> radotsvetkov/memora/memora<br><br>
         <span class="cmt"># Or with cargo</span><br>
-        cargo <span class="kw">install</span> --path crates/memora-cli
+        cargo <span class="kw">install</span> memora-cli<br><br>
+        <span class="cmt"># Or the release installer script</span><br>
+        curl --proto <span class="str">'=https'</span> --tlsv1.2 -LsSf \<br>
+        &nbsp;&nbsp;https://github.com/radotsvetkov/memora/releases/latest/download/memora-cli-installer.sh | sh
       </div>
     </div>
 
