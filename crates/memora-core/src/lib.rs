@@ -23,7 +23,10 @@ pub use challenger::{
     Challenger, ChallengerConfig, ChallengerReport, ContradictionAlert, CrossRegionAlert,
     FrontierAlert, StaleAlert,
 };
-pub use cite::{parse_claim_markers, CitationStatus, CitationValidator, CitedAnswer};
+pub use cite::{
+    parse_claim_markers, CitationStatus, CitationValidator, CitedAnswer, Entailment,
+    EntailmentChecker,
+};
 pub use claims::{
     Claim, ClaimExtractor, ClaimRelation, ClaimStore, ContradictionDetector, Provenance,
     StalenessTracker,

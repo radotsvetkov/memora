@@ -24,7 +24,7 @@ use anyhow::{anyhow, Context, Result};
 use memora_llm::{make_client, LlmClient, LlmProvider};
 
 use crate::answer::AnsweringPipeline;
-use crate::cite::{CitationValidator, CitedAnswer};
+use crate::cite::{CitationValidator, CitedAnswer, EntailmentChecker};
 use crate::claims::{Claim, ClaimStore};
 use crate::embed::{build_embedder, Embedder};
 use crate::index::{Index, VectorIndex};
@@ -161,6 +161,21 @@ impl Memora {
             self.config.llm.embedding_model.clone(),
         )
         .map_err(|err| anyhow!("failed to configure LLM client: {err}"))
+    }
+
+    /// Build an optional entailment checker over the configured LLM.
+    ///
+    /// Entailment is a best-effort, LLM-judged check of whether a verified source
+    /// span actually *supports* a cited assertion — a layer above the hash-proven
+    /// provenance in [`validate`]. Cloud providers are gated exactly like
+    /// [`query_verified`]: this fails unless `MEMORA_ENABLE_NETWORK_LLM=1`.
+    ///
+    /// [`validate`]: Self::validate
+    /// [`query_verified`]: Self::query_verified
+    pub fn entailment_checker(&self) -> Result<EntailmentChecker> {
+        let provider = self.config.llm_provider();
+        let llm = self.gated_llm_client(provider)?;
+        Ok(EntailmentChecker::new(llm))
     }
 
     /// Fetch a single claim by id, if it exists.

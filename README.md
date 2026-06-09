@@ -44,7 +44,7 @@ When the model answers, it cites claims by id. The validator re-reads each cited
 
 Memora guarantees **provenance integrity**. The cited source verbatim contains the quoted text and has not been modified, proven by hash. That is stricter than model-asserted citation APIs, which never re-read the source.
 
-It does not check **entailment**. Memora confirms that the source says the quoted text, not that the quote supports your conclusion. A model can cite a real span and still draw an unsupported inference. Entailment scoring is on the roadmap. Today, provenance is the contract, and we say so plainly.
+Provenance is not the same as **entailment**. Hashing proves the source verbatim contains the quoted text, not that the source *supports* the conclusion built on it. A model can cite a real span and still draw an unsupported inference. Memora now offers an optional, LLM-judged entailment check (`memora verify --entailment`) that flags citations whose source does not support the assertion. It is best-effort, not a proof: provenance is the guarantee, entailment is the model's opinion, and Memora keeps the two clearly separate (and never sends `secret` content to a cloud model to do it).
 
 ## Reproducible proof
 
@@ -77,7 +77,7 @@ Memora makes one claim no funded memory vendor makes: post-generation, hash-reve
 | | Memora | Mem0 / Zep / Letta / Cognee | Anthropic Citations API |
 |---|---|---|---|
 | Hash-reverified citation rejection | **Yes** | No | Model-asserted, not re-hashed |
-| Entailment (quote supports the claim) | No, provenance only | Partial (LLM-judged) | No |
+| Entailment (quote supports the claim) | Optional, LLM-judged (opt-in), kept separate from the proof | Partial (LLM-judged) | No |
 | Temporal validity and contradiction | Yes | Yes (Zep/Graphiti) | n/a |
 | Scale, integrations, hosted offering | Behind | Ahead | n/a |
 
@@ -105,6 +105,12 @@ println!("{} verified, {} rejected", answer.verified_count, answer.unverified_co
 memora verify --vault ~/your-vault answer.txt   # human verdict, exit 1 on failure
 memora verify --vault ~/your-vault --json answer.txt | jq .problems
 echo "drift uses MessagePack [claim:0123456789abcdef]." | memora verify --vault ~/your-vault
+```
+
+Add `--entailment` for an optional, LLM-judged check that the source actually supports each verified citation (and `--fail-unsupported` to fail the build on a "no" verdict). This is best-effort, kept separate from the hash-proven provenance:
+
+```bash
+memora verify --vault ~/your-vault --entailment answer.txt
 ```
 
 A reusable GitHub Action ships in this repo:
@@ -205,7 +211,7 @@ Issues, edge cases, and design discussions are welcome on the [issue tracker](ht
 - Local LLM at production quality
 - Web page clipping (PDF, text, and transcript ingestion are supported via `memora ingest`)
 - A GUI for the claim graph and atlas review
-- Entailment scoring (today: provenance integrity only)
+- Local NLI-model entailment (today entailment is optional and LLM-judged via `memora verify --entailment`, not a local model)
 
 ## Docs, contributing, license
 

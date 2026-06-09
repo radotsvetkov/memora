@@ -21,7 +21,7 @@ independently re-read and re-hash them.
 | | Memora | Mem0 / Zep / Letta / Cognee | Anthropic Citations API |
 |---|---|---|---|
 | Hash-reverified citation rejection | **Yes** | No (no re-read / rejection) | Model-asserted, not re-hashed |
-| Entailment — does the quote *support* the claim | No — provenance only, by design | Partial (LLM-judged) | No |
+| Entailment — does the quote *support* the claim | Optional, LLM-judged (opt-in), kept separate from the proof | Partial (LLM-judged) | No |
 | Temporal validity windows | Yes | Yes (Zep/Graphiti) | — |
 | Contradiction / supersession | Yes | Yes (Zep/Graphiti) | — |
 | Per-claim privacy redaction at the wire | Yes | Varies | — |
@@ -39,9 +39,12 @@ team). Those two admissions are what make the top row believable.
 - **Provenance integrity (guaranteed):** the cited source span verbatim exists, is
   unmodified (hash-proven), and contains any quoted text. This is strictly stronger
   than model-asserted citations.
-- **Entailment (not guaranteed):** Memora does not judge whether the quote *supports*
-  the surrounding conclusion. A model can cite a real span and still draw an
-  unsupported inference. Entailment scoring is on the roadmap.
+- **Entailment (optional, not guaranteed):** whether the source actually *supports*
+  the assertion (rather than just containing the quote) is a separate, harder
+  question. `memora verify --entailment` runs an opt-in, LLM-judged check and flags
+  citations the source does not support. It is best-effort, kept clearly separate
+  from the hash-proven provenance above, and never sends `secret` content to a
+  cloud model.
 
 ## The landscape, by category
 

@@ -138,3 +138,24 @@ fn verify_json_reports_problem_count() {
     assert_eq!(v["problems"], 1);
     assert_eq!(v["unverified"], 1);
 }
+
+/// `--entailment` is accepted and reported in JSON. With only an unverified
+/// citation there is nothing entailment-checkable, so no LLM is contacted — this
+/// stays deterministic offline (the entailment logic itself is unit-tested in core).
+#[test]
+fn verify_entailment_flag_is_wired_and_offline_safe_without_verified_citations() {
+    let (temp, vault) = seed_vault();
+    let answer = write_answer(temp.path(), "bad.txt", "Nope [claim:00000000deadbeef].");
+    let assert = Command::cargo_bin("memora")
+        .unwrap()
+        .args(["verify", "--entailment", "--json", "--vault"])
+        .arg(&vault)
+        .arg(&answer)
+        .assert()
+        .failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout);
+    let v: serde_json::Value = serde_json::from_str(&out).expect("valid json");
+    assert_eq!(v["entailment_checked"], true);
+    assert_eq!(v["unsupported"], 0);
+    assert_eq!(v["problems"], 1);
+}
