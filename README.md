@@ -65,8 +65,11 @@ Across a labeled fixture covering every failure mode, Memora rejects 100% of fab
 | **Time-aware reasoning** | Claims carry validity windows. Historical states stay queryable, and superseded claims are flagged, not surfaced as current. |
 | **Per-claim privacy** | Inline `<!--privacy:secret-->...<!--/privacy-->` markers narrow privacy to a sub-span. Secret content is redacted at a single type-enforced wire boundary before any cloud call. |
 | **Active challenger** | A daily run surfaces decisions, contradictions, stale dependencies, and open questions in `world_map.md`. |
+| **Document ingestion** | `memora ingest` pulls PDFs, web pages, text, and transcripts into the vault as verifiable notes (PDF/web behind opt-in features). |
+| **Visual report** | `memora report` renders the whole vault — interactive claim graph, contradictions, stale dependencies, world map — as one self-contained, offline HTML file. |
+| **Optional entailment** | `memora verify --entailment` adds a best-effort, LLM-judged check that the source supports the claim, kept separate from the hash-proven provenance. |
 | **Hybrid retrieval** | BM25, embeddings, and reciprocal-rank fusion over your claim graph. |
-| **Local-first** | A single Rust binary with SQLite and HNSW. Cloud calls are off by default and gated behind one explicit flag. Fully offline with Ollama. |
+| **Local-first** | A single Rust binary with SQLite and HNSW. Cloud calls are off by default and gated behind one explicit flag. Fully offline with Ollama or a bundled on-device embedder. |
 | **Obsidian-native** | A plain markdown vault with frontmatter. Keep editing in Obsidian. |
 | **MCP-native** | Works with Claude Desktop, Cursor, and other MCP clients over stdio. |
 

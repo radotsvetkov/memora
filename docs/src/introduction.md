@@ -45,9 +45,10 @@ and span hashes, not by prompt obedience.**
 - **Provenance integrity (guaranteed):** the cited source span verbatim exists, is
   unmodified (hash-proven via full-width blake3), and contains any quoted text. This
   is strictly stronger than model-asserted citation APIs.
-- **Entailment (not guaranteed):** Memora verifies that the source *says* the quoted
-  text, not that the quote *supports* the surrounding conclusion. Entailment scoring
-  is on the roadmap; today, provenance is the contract.
+- **Entailment (optional, not guaranteed):** whether the source actually *supports*
+  the conclusion (rather than just containing the quote) is a separate, harder
+  question. `memora verify --entailment` runs an opt-in, LLM-judged check for it,
+  kept clearly separate from the hash-proven provenance.
 
 ## What you get
 
@@ -58,14 +59,18 @@ and span hashes, not by prompt obedience.**
 | **Time-aware reasoning** | Claims have validity windows. "What was true in March" is queryable. Contradictions auto-supersede. |
 | **Per-claim privacy** | Inline `<!--privacy:secret-->...<!--/privacy-->` markers. Secrets redacted at the wire boundary on cloud LLMs, type-system enforced. |
 | **Active challenger** | Daily background worker surfaces stale claims, contradictions, cross-region patterns, and frontier gaps in your `world_map.md`. |
+| **Document ingestion** | `memora ingest` pulls PDFs, web pages, text, and transcripts into the vault as verifiable notes (PDF/web behind opt-in features). |
+| **Visual report** | `memora report` renders the vault — interactive claim graph, contradictions, stale dependencies, world map — as one offline HTML file. |
+| **Optional entailment** | `memora verify --entailment` adds a best-effort, LLM-judged check that the source supports the claim, separate from the proof. |
 | **Hybrid retrieval** | BM25 + embedding + reciprocal-rank fusion. |
-| **Local-first** | Single Rust binary. SQLite + HNSW. Works fully offline with Ollama. |
+| **Local-first** | Single Rust binary. SQLite + HNSW. Works fully offline with Ollama or a bundled on-device embedder. |
 | **Obsidian-native** | Plain markdown vault with frontmatter. Open and edit in Obsidian alongside Memora. |
 | **MCP-native** | Drop into Claude Code, Cursor, or any MCP client over stdio. |
 
 ## Where to go next
 
 - **[Quickstart](./quickstart.md)** - install and first verified citation in 10 minutes.
+- **[Ingesting documents](./ingesting.md)** - bring PDFs, web pages, and transcripts into the vault.
 - **[Architecture](./architecture.md)** - claim graph, retrieval, validation pipeline.
 - **[Obsidian guide](./obsidian-guide.md)** - daily-driver setup with Claude Code.
 - **[Comparison](./comparison.md)** - honest breakdown vs Mem0, Zep, Letta, and Anthropic Citations.

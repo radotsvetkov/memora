@@ -384,7 +384,9 @@
       <div class="feat reveal"><div class="ic">⏱</div><h3>Time-aware</h3><p>Claims carry valid_from and valid_until. Superseded claims are flagged, not asserted as current.</p></div>
       <div class="feat reveal"><div class="ic">⊘</div><h3>Privacy bands</h3><p>Secret content is redacted at one type-enforced wire boundary before any cloud call.</p></div>
       <div class="feat reveal"><div class="ic">▣</div><h3>Provenance + staleness</h3><p>Synthesis claims point to their sources. Edit a source and dependent claims fall stale.</p></div>
-      <div class="feat reveal"><div class="ic">⚙</div><h3>Local-first binary</h3><p>Rust, SQLite, and HNSW. No Postgres, no Pinecone, no Node. Fully offline with Ollama.</p></div>
+      <div class="feat reveal"><div class="ic">⊞</div><h3>Ingest anything</h3><p>Pull PDFs, web pages, and meeting transcripts into the vault as verifiable notes with memora ingest.</p></div>
+      <div class="feat reveal"><div class="ic">◫</div><h3>Visual report</h3><p>memora report renders the whole vault — an interactive claim graph, contradictions, stale dependencies, the world map — as one offline HTML file.</p></div>
+      <div class="feat reveal"><div class="ic">⚙</div><h3>Local-first binary</h3><p>Rust, SQLite, and HNSW. No Postgres, no Pinecone, no Node. Fully offline with Ollama or a bundled on-device embedder.</p></div>
     </div>
 
     <div class="boundary">
@@ -393,8 +395,8 @@
         <p>Provenance integrity. The cited source verbatim contains the quoted text and is unmodified, proven by hash. That is stricter than model-asserted citation APIs, which never re-read the source.</p>
       </div>
       <div class="bbox reveal">
-        <h3>What it does not</h3>
-        <p>Entailment. Memora verifies that the source <em>says</em> the quoted text, not that the quote <em>supports</em> your conclusion. We tell you exactly where the guarantee ends, because that line is the point.</p>
+        <h3>What it does not guarantee</h3>
+        <p>Entailment. Provenance proves the source <em>says</em> the quoted text, not that it <em>supports</em> your conclusion. <code>memora verify --entailment</code> adds an optional, LLM-judged check for that, kept clearly separate from the proof. We tell you exactly where the hard guarantee ends, because that line is the point.</p>
       </div>
     </div>
   </div>
@@ -488,6 +490,8 @@
         memora <span class="kw">query</span> <span class="str">"summarize this week's decisions"</span> --vault ~/brain
       </div>
     </div>
+
+    <p class="lead" style="margin-top:22px">Then bring in documents and see the whole picture: <code>memora ingest &lt;file|url&gt;</code> adds PDFs, web pages, and transcripts as verifiable notes, and <code>memora report --open</code> renders an interactive claim-graph overview.</p>
   </div>
 </section>
 
