@@ -1,0 +1,31 @@
+name: Python wrapper
+
+on:
+  push:
+    paths:
+      - "bindings/python/**"
+      - ".github/workflows/python.yml"
+  pull_request:
+    paths:
+      - "bindings/python/**"
+      - ".github/workflows/python.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    defaults:
+      run:
+        working-directory: bindings/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install (with dev deps)
+        run: pip install -e ".[dev]"
+      # The wrapper's tests mock the subprocess, so they need no `memora` binary.
+      - name: Test
+        run: pytest -q

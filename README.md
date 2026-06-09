@@ -45,6 +45,17 @@ A reusable GitHub Action ships in this repo:
     file: ./agent-output.txt
 ```
 
+Building in Python? `pip install memora-verify` and call it from your eval suite:
+
+```python
+from memora_verify import assert_cited
+
+def test_assistant_is_grounded():
+    assert_cited(my_rag_app(question), vault="./sources")   # raises on any unprovable citation
+```
+
+See [`bindings/python`](bindings/python) for the wrapper.
+
 ## The problem
 
 Any AI that cites sources retrieves text and then trusts the model to quote it faithfully. RAG assistants, agent memory layers, and note-aware tools all share this weakness. When the model invents a source, misquotes a decision, or cites a passage that does not contain the claim, you have no structural defense. You either notice the hallucination yourself, or you ship it to a user, a customer, or an auditor. Prompt-level "please cite your sources" does not survive a confident model.
