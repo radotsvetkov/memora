@@ -2,9 +2,9 @@
 
 **Catch your AI citing sources that don't say what it claims.**
 
-Memora is a local verification layer for AI memory. It re-reads the exact source span behind every citation, recomputes its hash, and rejects anything the source does not actually contain before the answer reaches you. One Rust binary, runs offline, works in Claude Desktop, Cursor, and any MCP client.
+Memora is the independent verification layer for AI citations. It re-reads the exact source span behind every citation, recomputes its hash, and rejects anything the source does not actually contain before the answer ships to a user or an auditor. Deterministic and provider-agnostic: it verifies any model over your own sources, and never asks a second model to grade the first. Run it in CI, in your eval suite, in an MCP client, or as a Rust library.
 
-*Cite, or it didn't happen.*
+*Your model shouldn't grade its own homework.*
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-3b82f6)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-f59e0b)](rust-toolchain.toml)
@@ -24,9 +24,30 @@ memora demo --open   # also opens an HTML Proof Report
 
 `memora demo` builds a throwaway vault, feeds the real validator an AI answer that contains one of every kind of bad citation, and shows the verdict. A faithful citation passes (green). A hallucinated id, a misquote, and a citation whose source changed after extraction are rejected (red, struck through). A retracted claim is flagged superseded. It is the same check `memora query` runs on every answer.
 
+## Verify in CI
+
+Drop one check into your eval suite or pipeline and a hallucinated citation never ships. `memora verify` checks an answer's citations against your sources and exits non-zero if any cannot be proven.
+
+```bash
+memora verify --vault ./sources answer.txt          # human verdict, exit 1 on failure
+memora verify --vault ./sources --json answer.txt | jq .problems
+echo "drift uses MessagePack [claim:0123456789abcdef]." | memora verify --vault ./sources
+```
+
+Add `--entailment` for an optional, LLM-judged check that the source actually supports each verified citation (and `--fail-unsupported` to fail the build on a "no" verdict). It is best-effort, kept separate from the hash-proven provenance.
+
+A reusable GitHub Action ships in this repo:
+
+```yaml
+- uses: radotsvetkov/memora/.github/actions/verify@main
+  with:
+    vault: ./sources
+    file: ./agent-output.txt
+```
+
 ## The problem
 
-Note-aware AI tools retrieve text and then trust the model to quote it faithfully. RAG over Obsidian, second-brain wrappers, and agent memory layers all share this weakness. When the model invents a meeting, misquotes a decision, or cites a claim your notes never made, you have no structural defense. You either notice the hallucination yourself, or you ship it.
+Any AI that cites sources retrieves text and then trusts the model to quote it faithfully. RAG assistants, agent memory layers, and note-aware tools all share this weakness. When the model invents a source, misquotes a decision, or cites a passage that does not contain the claim, you have no structural defense. You either notice the hallucination yourself, or you ship it to a user, a customer, or an auditor. Prompt-level "please cite your sources" does not survive a confident model.
 
 ## How it works
 
@@ -99,31 +120,6 @@ println!("{} verified, {} rejected", answer.verified_count, answer.unverified_co
 ```
 
 `validate` is pure verification (no network, no LLM). `query_verified` generates an answer with the configured LLM and re-validates every citation before returning it. `search` and `claim` are also available. The CLI's `query` command runs on this same facade.
-
-## Verify in CI
-
-`memora verify` checks an AI answer's citations against a vault and exits non-zero if any cannot be proven, so a pipeline fails the build when a model cites something the source does not contain.
-
-```bash
-memora verify --vault ~/your-vault answer.txt   # human verdict, exit 1 on failure
-memora verify --vault ~/your-vault --json answer.txt | jq .problems
-echo "drift uses MessagePack [claim:0123456789abcdef]." | memora verify --vault ~/your-vault
-```
-
-Add `--entailment` for an optional, LLM-judged check that the source actually supports each verified citation (and `--fail-unsupported` to fail the build on a "no" verdict). This is best-effort, kept separate from the hash-proven provenance:
-
-```bash
-memora verify --vault ~/your-vault --entailment answer.txt
-```
-
-A reusable GitHub Action ships in this repo:
-
-```yaml
-- uses: radotsvetkov/memora/.github/actions/verify@main
-  with:
-    vault: ./vault
-    file: ./agent-output.txt
-```
 
 ## Recommended models
 

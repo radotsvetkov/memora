@@ -222,6 +222,7 @@
   <a class="brand" href="#top"><span class="dot"></span>memora<span class="ver">v0.1.29</span></a>
   <div class="nav-links">
     <a href="#how">How it works</a>
+    <a href="#verify">Verify in CI</a>
     <a href="#proof">Proof</a>
     <a href="#compare">Compare</a>
     <a href="#install">Install</a>
@@ -233,17 +234,18 @@
 <!-- HERO -->
 <header class="hero" id="top">
   <div class="container">
-    <div class="eyebrow">Local verification layer for AI memory</div>
+    <div class="eyebrow">Independent verification for AI citations</div>
     <h1>Catch your AI citing sources that <span class="hl">don't say what it claims</span>.</h1>
     <p class="lead">
-      Memora re-reads the exact source span behind every citation and recomputes its
-      hash. Anything the source does not actually contain is rejected before the answer
-      reaches you. One Rust binary, runs locally, works in Claude Desktop, Cursor, and
-      any MCP client.
+      Memora is the independent check that proves your AI's citations are real. It re-reads
+      the exact source span behind every citation, recomputes its hash, and rejects anything
+      the source does not contain before the answer ships. Deterministic and provider-agnostic:
+      it verifies any model over your own sources, and never asks a second model to grade the
+      first. Run it in CI, in your eval suite, or at request time.
     </p>
-    <p class="promise">cite, or it didn't happen.</p>
+    <p class="promise">your model shouldn't grade its own homework.</p>
     <div class="cta-row">
-      <a class="btn btn-primary" href="#install">Install memora</a>
+      <a class="btn btn-primary" href="#verify">Add it to your pipeline</a>
       <a class="btn btn-ghost" href="#proof">See the 10-second demo</a>
       <a class="btn btn-ghost" href="https://github.com/radotsvetkov/memora">View on GitHub</a>
     </div>
@@ -337,6 +339,35 @@
         </div>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- VERIFY IN CI -->
+<section class="band" id="verify">
+  <div class="container">
+    <div class="eyebrow">Put it in your pipeline</div>
+    <h2>Fail the build when the AI cites something false.</h2>
+    <p class="lead">
+      <code style="color:var(--violet)">memora verify</code> checks an answer's citations
+      against your sources and exits non-zero if any cannot be proven. Drop it into your eval
+      suite or CI and a hallucinated citation never reaches production. Deterministic,
+      provider-agnostic, and it adds no extra LLM call.
+    </p>
+    <div class="panel-code" style="max-width:780px;margin:30px auto 0;text-align:left">
+      <span class="cmt"># locally, or inside your AI eval suite</span><br>
+      memora <span class="kw">verify</span> --vault ./sources answer.txt   <span class="cmt"># exit 1 if a citation is unprovable</span><br><br>
+      <span class="cmt"># or as a step in GitHub Actions</span><br>
+      - uses: radotsvetkov/memora/.github/actions/verify@main<br>
+      &nbsp;&nbsp;with:<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;vault: ./sources<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;file: ./agent-output.txt
+    </div>
+    <p class="lead" style="margin-top:22px">
+      It verifies any model's output over your own corpus, so the check is independent of the
+      thing it's checking. An optional <code style="color:var(--violet)">--entailment</code>
+      pass adds a best-effort look at whether the source actually supports the claim, kept
+      clearly separate from the hash-proven part.
+    </p>
   </div>
 </section>
 
