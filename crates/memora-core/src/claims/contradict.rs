@@ -11,6 +11,17 @@ use crate::note::Privacy;
 static PREDICATE_EQUIVALENCE_CACHE: OnceLock<Mutex<HashMap<(String, String), bool>>> =
     OnceLock::new();
 
+/// Cache key for a contradiction check: lowercased subject plus the
+/// order-independent pair of `predicate\u{1f}object` strings.
+type ClaimPairKey = (String, String, String);
+
+/// Caches the LLM's "do these two claims contradict?" verdict, keyed by the
+/// canonical (subject, {predicate, object}) pair so (A, B) and (B, A) share one
+/// entry. The verdict is a stable semantic fact about those exact values, so a
+/// process-global cache is safe and halves LLM cost during the rebuild pass
+/// (where each contradicting pair would otherwise be checked from both sides).
+static CONTRADICTION_CACHE: OnceLock<Mutex<HashMap<ClaimPairKey, bool>>> = OnceLock::new();
+
 pub struct ContradictionDetector<'a> {
     pub store: &'a ClaimStore<'a>,
     pub stale: &'a StalenessTracker<'a>,
@@ -125,6 +136,17 @@ Answer with JSON only. Use exactly {{"equivalent":true}} or {{"equivalent":false
     }
 
     async fn claims_contradict(&self, a: &Claim, b: &Claim) -> Result<bool> {
+        let key = contradiction_cache_key(a, b);
+        let cache = CONTRADICTION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Some(cached) = cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&key)
+            .copied()
+        {
+            return Ok(cached);
+        }
+
         let prompt = format!(
             r#"Claim A: subject="{}" predicate="{}" object="{}"
 Claim B: subject="{}" predicate="{}" object="{}"
@@ -146,8 +168,34 @@ Answer with JSON only. Use exactly {{"contradicts":true}} or {{"contradicts":fal
                 0.0,
             )
             .await?;
-        Ok(parse_bool_field(&text, "contradicts").unwrap_or_else(|| starts_with_yes(&text)))
+        let contradicts =
+            parse_bool_field(&text, "contradicts").unwrap_or_else(|| starts_with_yes(&text));
+        cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(key, contradicts);
+        Ok(contradicts)
     }
+}
+
+/// Canonical cache key for a contradiction check. The two claims always share a
+/// subject (candidates are looked up by subject), so the key is the lowercased
+/// subject plus the order-independent pair of `predicate\u{1f}object` strings.
+fn contradiction_cache_key(a: &Claim, b: &Claim) -> ClaimPairKey {
+    let part = |c: &Claim| {
+        format!(
+            "{}\u{1f}{}",
+            c.predicate.trim().to_ascii_lowercase(),
+            c.object
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+        )
+    };
+    let (pa, pb) = (part(a), part(b));
+    let (lo, hi) = if pa <= pb { (pa, pb) } else { (pb, pa) };
+    (a.subject.trim().to_ascii_lowercase(), lo, hi)
 }
 
 fn parse_bool_field(text: &str, key: &str) -> Option<bool> {

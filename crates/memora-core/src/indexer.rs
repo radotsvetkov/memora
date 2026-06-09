@@ -174,7 +174,11 @@ impl<'a> Indexer<'a> {
                         vector_index,
                         claim_extractor.as_ref(),
                         extract_reference_notes,
-                        skip_contradiction_detection,
+                        // Always skip inline contradiction detection here: it does a
+                        // non-transactional read-then-write that races across the
+                        // parallel notes. Detection runs once, deterministically,
+                        // in the post-commit pass below.
+                        true,
                         &parsed,
                     )
                     .await
@@ -253,6 +257,41 @@ impl<'a> Indexer<'a> {
         if pruned > 0 {
             tracing::info!(pruned, "pruned deleted notes during full rebuild");
         }
+
+        // Deterministic contradiction-detection pass. Run AFTER every note's
+        // claims are committed (never inline during the parallel phase above), so
+        // detection sees the complete claim set and can't race on commit timing.
+        // The walk is over claims sorted by id, so the outcome is stable.
+        if !skip_contradiction_detection {
+            if let Some(extractor) = self.claim_extractor.as_ref() {
+                let claim_store = ClaimStore::new(self.index);
+                let provenance = Provenance::new(self.index);
+                let stale = StalenessTracker::new(self.index, &provenance);
+                let detector = ContradictionDetector {
+                    store: &claim_store,
+                    stale: &stale,
+                    llm: Arc::clone(&extractor.llm),
+                };
+                let mut note_ids = self.index.all_ids()?;
+                note_ids.sort();
+                let mut all_claims = Vec::new();
+                for note_id in &note_ids {
+                    all_claims.extend(claim_store.list_for_note(note_id)?);
+                }
+                all_claims.sort_by(|a, b| a.id.cmp(&b.id));
+                for claim in &all_claims {
+                    let superseded = detector.check_new_claim(claim).await?;
+                    if !superseded.is_empty() {
+                        tracing::info!(
+                            claim_id = %claim.id,
+                            count = superseded.len(),
+                            "supersession recorded (post-commit pass)"
+                        );
+                    }
+                }
+            }
+        }
+
         self.vector_index
             .lock()
             .map_err(|_| anyhow::anyhow!("vector index mutex poisoned"))?

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Contradiction detection during `full_rebuild` is now deterministic. It previously ran inline during the parallel per-note phase, doing a non-transactional read-then-write that raced across notes (so a cross-note contradiction could be detected or missed depending on commit timing). It now runs once, after every note's claims are committed, in a single ordered pass. `claims_contradict` verdicts are cached by claim-pair tuple, so each pair is checked once.
+
 ### Changed
 - Release workflow no longer attempts to auto-publish the Homebrew formula (it required a cross-repo token kept out of CI), so release runs stay green. The tap (`radotsvetkov/homebrew-memora`) is updated manually per release; see RELEASING.md.
 

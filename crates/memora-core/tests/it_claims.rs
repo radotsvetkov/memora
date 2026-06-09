@@ -563,3 +563,97 @@ async fn skip_contradiction_detection_skips_contradiction_edges() -> Result<()> 
     );
     Ok(())
 }
+
+// A contradiction that spans two notes must be detected reliably even when those
+// notes are interleaved among many others processed in parallel. The deterministic
+// post-commit pass guarantees this; the old inline-during-parallel detection could
+// miss it depending on commit timing.
+#[tokio::test]
+async fn contradictions_detected_across_notes_under_parallel_rebuild() -> Result<()> {
+    let temp = tempdir()?;
+    let vault_root = temp.path().join("vault");
+
+    let old_body = "Roadmap status is pending approval.";
+    let new_body = "Roadmap status is approved.";
+    write_note(
+        &vault_root.join("rm-old.md"),
+        "rm-old",
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+        old_body,
+    )?;
+    write_note(
+        &vault_root.join("rm-new.md"),
+        "rm-new",
+        "2026-02-01T00:00:00Z",
+        "2026-02-01T00:00:00Z",
+        new_body,
+    )?;
+
+    // Unrelated notes so the contradicting pair is buried among parallel work.
+    let noise = [
+        (
+            "noise-a",
+            "Alice",
+            "works_at",
+            "ACME",
+            "Alice works at ACME.",
+        ),
+        (
+            "noise-b",
+            "Bob",
+            "lives_in",
+            "Berlin",
+            "Bob lives in Berlin.",
+        ),
+        (
+            "noise-c",
+            "Carol",
+            "drives",
+            "Volvo",
+            "Carol drives a Volvo.",
+        ),
+    ];
+    for &(id, _s, _p, _o, body) in &noise {
+        write_note(
+            &vault_root.join(format!("{id}.md")),
+            id,
+            "2026-01-15T00:00:00Z",
+            "2026-01-15T00:00:00Z",
+            body,
+        )?;
+    }
+
+    let mut responses = HashMap::new();
+    responses.insert(
+        "rm-old".to_string(),
+        make_claim_json("Roadmap", "status_is", "pending", 0, old_body.len()),
+    );
+    responses.insert(
+        "rm-new".to_string(),
+        make_claim_json("Roadmap", "status_is", "approved", 0, new_body.len()),
+    );
+    for &(id, s, p, o, body) in &noise {
+        responses.insert(id.to_string(), make_claim_json(s, p, o, 0, body.len()));
+    }
+    let llm = Arc::new(MockClaimsLlm::new(responses, HashSet::new(), true));
+
+    let index = Index::open(&temp.path().join("index").join("memora.db"))?;
+    let vault = Vault::new(&vault_root);
+    let indexer = build_indexer(
+        &vault,
+        &index,
+        llm,
+        &temp.path().join("index").join("vectors"),
+    )?
+    .with_parallel_notes(8);
+    indexer.full_rebuild().await?;
+
+    let store = ClaimStore::new(&index);
+    assert_eq!(
+        store.contradictions_unack()?.len(),
+        1,
+        "the cross-note Roadmap contradiction must be detected exactly once"
+    );
+    Ok(())
+}
