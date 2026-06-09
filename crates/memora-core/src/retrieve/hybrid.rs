@@ -2,12 +2,9 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
-use uuid::Uuid;
 
 use crate::embed::Embedder;
 use crate::index::{Index, VectorIndex};
-use crate::retrieve::hebbian::HebbianLearner;
-use crate::retrieve::spread::spread;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RetrievalHit {
@@ -76,38 +73,5 @@ impl<'a> HybridRetriever<'a> {
         });
         fused.truncate(k);
         Ok(fused)
-    }
-
-    pub async fn search_with_spread_and_record(
-        &self,
-        query: &str,
-        k: usize,
-        max_extra: usize,
-    ) -> Result<(String, Vec<RetrievalHit>)> {
-        let seeds = self.search(query, k).await?;
-        let mut expanded = spread(&seeds, self.index, max_extra)?;
-
-        for hit in &mut expanded {
-            let qvalue = self.index.qvalue(&hit.id)?.unwrap_or(0.0);
-            hit.score += 0.1 * qvalue;
-        }
-        expanded.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| a.id.cmp(&b.id))
-        });
-
-        let final_ids = expanded
-            .iter()
-            .map(|hit| hit.id.clone())
-            .collect::<Vec<_>>();
-        let final_refs = final_ids.iter().map(String::as_str).collect::<Vec<_>>();
-        HebbianLearner::new(self.index).record_coactivation(&final_refs)?;
-
-        let query_id = Uuid::new_v4().to_string();
-        self.index.record_retrieval(&query_id, query, &final_ids)?;
-
-        Ok((query_id, expanded))
     }
 }

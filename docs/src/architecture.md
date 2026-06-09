@@ -173,9 +173,8 @@ Retrieval is not a single query operation. It is a staged cascade:
 1. lexical retrieval from FTS5 (BM25-style scoring)
 2. vector retrieval from HNSW embeddings
 3. reciprocal-rank fusion (RRF)
-4. graph expansion via co-activation and spreading activation
-5. privacy filtering
-6. prompt context assembly
+4. privacy filtering
+5. prompt context assembly
 
 The output is a ranked claim set, not note paragraphs.
 

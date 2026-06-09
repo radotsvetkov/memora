@@ -11,6 +11,9 @@
 ### Changed
 - Release workflow no longer attempts to auto-publish the Homebrew formula (it required a cross-repo token kept out of CI), so release runs stay green. The tap (`radotsvetkov/homebrew-memora`) is updated manually per release; see RELEASING.md.
 
+### Removed
+- The unused "cognitive" retrieval layer: Hebbian co-activation, spreading activation, and Q-value reinforcement. None of it ran in production (only via a code path with no callers), so it was dead weight that over-stated what retrieval does. Removed `QValueLearner`, `HebbianLearner`, `spread`, the dead `search_with_spread_and_record` path, and the MCP tools that surfaced it (`memora_neighbors`, `memora_record_useful` — they returned empty/erroring results). Production retrieval is BM25 + embeddings + reciprocal-rank fusion, as documented. The `notes.qvalue` / `hebbian_edges` / `retrievals` tables are retained (harmless) to avoid a schema migration.
+
 ## [0.1.29] - 2026-06-09
 
 ### Added

@@ -217,17 +217,7 @@ Use Claude Code with Memora MCP configured. Ask normal questions:
 
 Memora-backed responses include claim citations that are validated before display.
 
-### 4) Reinforce useful retrievals with `memora_record_useful`
-
-When a cited answer is useful, mark it:
-
-- this feeds Q-value style reinforcement for retrieval policy
-- high-value paths become easier to prioritize in future ranking
-
-You are effectively training the memory prioritization loop with low-friction
-feedback from real usage.
-
-### 5) Review `world_map.md` regularly
+### 4) Review `world_map.md` regularly
 
 Open the "Today's review" section every day or two. Act on one or two items:
 

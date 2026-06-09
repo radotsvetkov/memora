@@ -94,28 +94,6 @@ impl MemoraMcpServer {
         json_tool_result(value)
     }
 
-    #[tool(description = "memora_neighbors: {id, top_n?}")]
-    async fn memora_neighbors(
-        &self,
-        #[tool(aggr)] Parameters(input): Parameters<NeighborInput>,
-    ) -> Result<CallToolResult, McpError> {
-        let value = self.runtime.neighbors(input).await.map_err(to_mcp_error)?;
-        json_tool_result(value)
-    }
-
-    #[tool(description = "memora_record_useful: {query_id, useful_ids}")]
-    async fn memora_record_useful(
-        &self,
-        #[tool(aggr)] Parameters(input): Parameters<RecordUsefulInput>,
-    ) -> Result<CallToolResult, McpError> {
-        let value = self
-            .runtime
-            .record_useful(input)
-            .await
-            .map_err(to_mcp_error)?;
-        json_tool_result(value)
-    }
-
     #[tool(description = "memora_capture: {region, summary, body, tags, privacy?}")]
     async fn memora_capture(
         &self,
@@ -337,7 +315,6 @@ impl MemoraRuntime {
         let parsed = note::parse(&note_path)?;
         let note_privacy = parse_privacy_str(&row.privacy)?;
         let (body, body_redacted) = redact_body_for_display(&parsed.body, note_privacy);
-        let hebbian = index.hebbian_neighbors(&row.id, 5)?;
         Ok(json!({
             "id": row.id,
             "region": row.region,
@@ -347,8 +324,7 @@ impl MemoraRuntime {
             "body_redacted": body_redacted,
             "tags": parsed.fm.tags,
             "refs": parsed.fm.refs,
-            "wikilinks": parsed.wikilinks,
-            "hebbian_neighbors": hebbian.into_iter().map(|(id, score)| json!({"id": id, "score": score})).collect::<Vec<_>>()
+            "wikilinks": parsed.wikilinks
         }))
     }
 
@@ -371,29 +347,6 @@ impl MemoraRuntime {
     pub async fn get_world_map(&self) -> Result<Value> {
         let markdown = fs::read_to_string(self.vault_root.join("world_map.md"))?;
         Ok(json!({ "markdown": markdown }))
-    }
-
-    pub async fn neighbors(&self, input: NeighborInput) -> Result<Value> {
-        let top_n = input.top_n.unwrap_or(5) as usize;
-        let index = Index::open(&self.index_db)?;
-        let hebbian = index.hebbian_neighbors(&input.id, top_n)?;
-        let wikilinks = index.wikilink_targets(&input.id)?;
-        Ok(json!({
-            "hebbian": hebbian.into_iter().map(|(id, weight)| json!({"id": id, "weight": weight})).collect::<Vec<_>>(),
-            "wikilinks": wikilinks
-        }))
-    }
-
-    pub async fn record_useful(&self, input: RecordUsefulInput) -> Result<Value> {
-        let conn = rusqlite::Connection::open(&self.index_db)?;
-        let changed = conn.execute(
-            "UPDATE retrievals SET marked_useful_json = ? WHERE query_id = ?",
-            params![serde_json::to_string(&input.useful_ids)?, input.query_id],
-        )?;
-        if changed == 0 {
-            return Err(anyhow!("query_id not found: {}", input.query_id));
-        }
-        Ok(json!({ "ok": true }))
     }
 
     pub async fn capture(&self, input: CaptureInput) -> Result<Value> {
@@ -602,8 +555,6 @@ impl MemoraRuntime {
             "memora_get_note" => self.get_note(serde_json::from_value(args)?).await,
             "memora_get_atlas" => self.get_atlas(serde_json::from_value(args)?).await,
             "memora_get_world_map" => self.get_world_map().await,
-            "memora_neighbors" => self.neighbors(serde_json::from_value(args)?).await,
-            "memora_record_useful" => self.record_useful(serde_json::from_value(args)?).await,
             "memora_capture" => self.capture(serde_json::from_value(args)?).await,
             "memora_consolidate" => self.consolidate(serde_json::from_value(args)?).await,
             "memora_verify_claim" => self.verify_claim(serde_json::from_value(args)?).await,
@@ -716,19 +667,6 @@ pub struct NoteInput {
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct RegionInput {
     pub region: String,
-}
-
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
-pub struct NeighborInput {
-    pub id: String,
-    #[serde(default)]
-    pub top_n: Option<u32>,
-}
-
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
-pub struct RecordUsefulInput {
-    pub query_id: String,
-    pub useful_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]

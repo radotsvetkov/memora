@@ -79,7 +79,7 @@ per `[privacy].redact_secret_in_cloud` in vault config.
 Input: `{"id":"note-1"}`
 
 Output keys: `id`, `region`, `summary`, `privacy`, `body`, `body_redacted`,
-`tags`, `refs`, `wikilinks`, `hebbian_neighbors`
+`tags`, `refs`, `wikilinks`
 
 Secret notes return `"body": "[redacted]"` and `"body_redacted": true`.
 
@@ -94,20 +94,6 @@ Output keys: `region`, `atlas_markdown`, `note_count`
 Input: `{}`
 
 Output: `{"markdown":"# World Map ..."}`
-
-## `memora_neighbors`
-
-Input: `{"id":"note-1","top_n":5}`
-
-Output keys: `hebbian`, `wikilinks`
-
-## `memora_record_useful`
-
-Input: `{"query_id":"...","useful_ids":["note-a","note-b"]}`
-
-Output: `{"ok":true}`
-
-Returns an error if `query_id` does not exist in the retrievals table.
 
 ## `memora_capture`
 

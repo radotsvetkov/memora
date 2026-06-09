@@ -147,7 +147,6 @@ validation, Memora strips/retries with verified-only context before returning.
 - Run `memora watch --vault ~/brain` in a dedicated terminal tab.
 - Add inline secret markers in mixed-sensitivity notes.
 - Check `world_map.md` after your next capture session.
-- Use `memora_record_useful` when a cited answer was especially helpful.
 
 ## Troubleshooting basics
 

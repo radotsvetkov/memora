@@ -10,7 +10,6 @@ pub mod embed;
 pub mod facade;
 pub mod index;
 pub mod indexer;
-pub mod learn;
 pub mod note;
 pub mod privacy;
 pub mod retrieve;
@@ -36,10 +35,9 @@ pub use embed::{
 };
 pub use facade::Memora;
 pub use index::{Index, IndexError, NoteRow, RebuildStats, VectorIndex};
-pub use learn::QValueLearner;
 pub use note::{Frontmatter, Note, NoteSource, ParseError, Privacy};
 pub use privacy::{PrivacyFilter, RedactedClaim, RedactionStats};
-pub use retrieve::{spread, HebbianLearner, HitSource, HybridRetriever, RetrievalHit};
+pub use retrieve::{HitSource, HybridRetriever, RetrievalHit};
 pub use scheduler::{
     ChallengerScheduleConfig, ConsolidationScheduleConfig, Scheduler, SchedulerConfig,
 };
