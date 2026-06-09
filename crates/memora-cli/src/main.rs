@@ -21,6 +21,8 @@ enum Commands {
     Verify(commands::verify::VerifyArgs),
     /// Ingest a document (PDF/text/markdown/transcript) into the vault as a note.
     Ingest(commands::ingest::IngestArgs),
+    /// Generate a self-contained HTML report of the vault (graph, contradictions, world map).
+    Report(commands::report::ReportArgs),
     Init(commands::init::InitArgs),
     Index(commands::index::IndexArgs),
     Watch(commands::watch::WatchArgs),
@@ -53,6 +55,7 @@ async fn main() -> Result<()> {
         Commands::Demo(args) => commands::demo::run(args).await?,
         Commands::Verify(args) => commands::verify::run(args).await?,
         Commands::Ingest(args) => commands::ingest::run(args).await?,
+        Commands::Report(args) => commands::report::run(args).await?,
         Commands::Init(args) => commands::init::run(args)?,
         Commands::Index(args) => commands::index::run(args).await?,
         Commands::Watch(args) => commands::watch::run(args).await?,

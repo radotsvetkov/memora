@@ -134,10 +134,26 @@ pub fn render_terminal(lines: &[VerdictLine], clean_text: &str, raw_text: &str, 
     println!("   {}", paint(c, "32", &clean));
 }
 
-fn html_escape(s: &str) -> String {
+/// Escape text for safe inclusion in HTML element content.
+pub fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+/// Open a generated file in the OS default browser (best-effort, ignores errors).
+pub fn open_in_browser(path: &std::path::Path) {
+    let (bin, args): (&str, Vec<std::ffi::OsString>) = if cfg!(target_os = "macos") {
+        ("open", vec![path.as_os_str().to_owned()])
+    } else if cfg!(target_os = "windows") {
+        (
+            "cmd",
+            vec!["/C".into(), "start".into(), path.as_os_str().to_owned()],
+        )
+    } else {
+        ("xdg-open", vec![path.as_os_str().to_owned()])
+    };
+    let _ = std::process::Command::new(bin).args(args).status();
 }
 
 /// A standalone, dependency-free HTML "Proof Report".

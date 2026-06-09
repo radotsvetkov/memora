@@ -153,25 +153,11 @@ Auth uses short-lived JWTs.";
         )?;
         println!("\nProof Report written to: {}", report_path.display());
         if args.open {
-            open_in_browser(&report_path);
+            super::verdict::open_in_browser(&report_path);
         }
     }
 
     Ok(())
-}
-
-fn open_in_browser(path: &Path) {
-    let (bin, args): (&str, Vec<std::ffi::OsString>) = if cfg!(target_os = "macos") {
-        ("open", vec![path.as_os_str().to_owned()])
-    } else if cfg!(target_os = "windows") {
-        (
-            "cmd",
-            vec!["/C".into(), "start".into(), path.as_os_str().to_owned()],
-        )
-    } else {
-        ("xdg-open", vec![path.as_os_str().to_owned()])
-    };
-    let _ = std::process::Command::new(bin).args(args).status();
 }
 
 fn seed_note(vault: &Path, index: &Index, rel: &str, id: &str, body: &str) -> Result<()> {

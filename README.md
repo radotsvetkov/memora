@@ -182,6 +182,12 @@ memora ingest https://example.com/post --vault ~/your-vault --region web      # 
 memora index --vault ~/your-vault
 ```
 
+Generate a visual overview of the whole vault — an interactive claim graph, the contradictions and stale dependencies that need attention, and the world map — as one self-contained, offline HTML file:
+
+```bash
+memora report --vault ~/your-vault --open
+```
+
 Use it from Claude Desktop (`claude_desktop_config.json`):
 
 ```json
@@ -210,7 +216,7 @@ Issues, edge cases, and design discussions are welcome on the [issue tracker](ht
 
 - Mobile and non-Obsidian access
 - Local LLM at production quality
-- A GUI for the claim graph and atlas review
+- A live, interactive GUI (today `memora report` generates a self-contained static HTML overview with an interactive claim graph; a running web app is future)
 - Local NLI-model entailment (today entailment is optional and LLM-judged via `memora verify --entailment`, not a local model)
 
 ## Docs, contributing, license

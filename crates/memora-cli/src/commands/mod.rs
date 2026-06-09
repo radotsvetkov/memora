@@ -8,6 +8,7 @@ pub mod ingest;
 pub mod init;
 pub mod privacy;
 pub mod query;
+pub mod report;
 pub mod serve;
 pub mod verdict;
 pub mod verify;
