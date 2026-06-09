@@ -184,7 +184,7 @@ By default Memora never sends your notes to a cloud provider. Cloud LLM and clou
 
 ## Status
 
-v0.1.28. Indexes a 100-note vault in about 5 to 10 minutes with Claude Haiku for roughly $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target, and larger scales are unmeasured. Privacy redaction runs through one type-enforced wire boundary that covers every cloud egress (LLM and embeddings). Citation fingerprints are full-width 256-bit blake3, and legacy 64-bit fingerprints from older indexes still verify until you re-index.
+v0.1.29. Indexes a 100-note vault in about 5 to 10 minutes with Claude Haiku for roughly $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target, and larger scales are unmeasured. Privacy redaction runs through one type-enforced wire boundary that covers every cloud egress (LLM and embeddings). Citation fingerprints are full-width 256-bit blake3, and legacy 64-bit fingerprints from older indexes still verify until you re-index.
 
 Issues, edge cases, and design discussions are welcome on the [issue tracker](https://github.com/radotsvetkov/memora/issues).
 
