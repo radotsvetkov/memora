@@ -7,14 +7,15 @@ members = ["cargo:."]
 cargo-dist-version = "0.31.0"
 # CI backends to support
 ci = "github"
-# The installers to generate for each app
-installers = ["shell", "homebrew"]
-# Homebrew tap to publish the formula to (repo: radotsvetkov/homebrew-memora).
-# Add a `HOMEBREW_TAP_TOKEN` repo secret (a fine-grained PAT with contents:write
-# on the tap) so releases can push the formula. Then users run:
-#   brew install radotsvetkov/memora/memora
-tap = "radotsvetkov/homebrew-memora"
-publish-jobs = ["homebrew"]
+# The installers to generate for each app.
+# NOTE: Homebrew is intentionally NOT wired into dist. The tap
+# (radotsvetkov/homebrew-memora) is maintained MANUALLY (see RELEASING.md),
+# because auto-publishing to a separate tap repo needs a cross-repo PAT we keep
+# out of CI. This keeps every release green. To enable automatic Homebrew
+# publishing later: add `"homebrew"` here, add `tap = "radotsvetkov/homebrew-memora"`
+# and `publish-jobs = ["homebrew"]`, set a fine-grained `HOMEBREW_TAP_TOKEN`
+# secret (contents:write on the tap), and run `dist generate`.
+installers = ["shell"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = [
   "x86_64-unknown-linux-gnu",

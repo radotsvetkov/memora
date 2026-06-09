@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Release workflow no longer attempts to auto-publish the Homebrew formula (it required a cross-repo token kept out of CI), so release runs stay green. The tap (`radotsvetkov/homebrew-memora`) is updated manually per release; see RELEASING.md.
+
 ## [0.1.29] - 2026-06-09
 
 ### Added
