@@ -362,6 +362,13 @@
       &nbsp;&nbsp;&nbsp;&nbsp;vault: ./sources<br>
       &nbsp;&nbsp;&nbsp;&nbsp;file: ./agent-output.txt
     </div>
+    <p class="lead" style="margin-top:24px">Building in Python? It drops into your eval suite in one line.</p>
+    <div class="panel-code" style="max-width:780px;margin:14px 0 0;text-align:left">
+      <span class="cmt"># pip install memora-verify</span><br>
+      <span class="kw">from</span> memora_verify <span class="kw">import</span> assert_cited<br><br>
+      <span class="kw">def</span> test_answer_is_grounded():<br>
+      &nbsp;&nbsp;assert_cited(my_rag_app(question), vault=<span class="str">"./sources"</span>)   <span class="cmt"># raises on any unprovable citation</span>
+    </div>
     <p class="lead" style="margin-top:22px">
       It verifies any model's output over your own corpus, so the check is independent of the
       thing it's checking. An optional <code style="color:var(--violet)">--entailment</code>
@@ -460,6 +467,7 @@
       <button type="button" class="tab active" onclick="showTab('t-demo', this)">10-second demo</button>
       <button type="button" class="tab" onclick="showTab('t-install', this)">Install</button>
       <button type="button" class="tab" onclick="showTab('t-source', this)">From source</button>
+      <button type="button" class="tab" onclick="showTab('t-python', this)">Python (eval/CI)</button>
       <button type="button" class="tab" onclick="showTab('t-mcp', this)">Claude / Cursor (MCP)</button>
       <button type="button" class="tab" onclick="showTab('t-ollama', this)">Offline (Ollama)</button>
     </div>
@@ -508,6 +516,16 @@
         &nbsp;&nbsp;&nbsp;&nbsp;}<br>
         &nbsp;&nbsp;}<br>
         }
+      </div>
+    </div>
+
+    <div id="t-python" class="tab-panel">
+      <div class="panel-code">
+        <button class="copy" data-clip="pip install memora-verify">copy</button>
+        <span class="cmt"># For Python AI teams: verify citations in your eval suite / CI</span><br>
+        pip <span class="kw">install</span> memora-verify<br><br>
+        <span class="kw">from</span> memora_verify <span class="kw">import</span> assert_cited<br>
+        assert_cited(answer, vault=<span class="str">"./sources"</span>)   <span class="cmt"># raises on any unprovable citation</span>
       </div>
     </div>
 
