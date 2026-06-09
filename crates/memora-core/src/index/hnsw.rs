@@ -18,6 +18,10 @@ pub struct VectorIndex {
     hnsw: Hnsw<'static, f32, DistCosine>,
     id_to_idx: HashMap<String, usize>,
     idx_to_id: Vec<Option<String>>,
+    /// Live vectors by id. `hnsw_rs` has no delete and cannot hand its points
+    /// back, so we keep our own copy of the live vectors to rebuild (compact) the
+    /// graph and drop tombstoned entries. Bounded by the live note count.
+    vectors: HashMap<String, Vec<f32>>,
     dim: usize,
     path: PathBuf,
     dirty: bool,
@@ -76,6 +80,7 @@ impl VectorIndex {
         self.hnsw.insert((vec, next_idx));
         self.idx_to_id.push(Some(id.to_string()));
         self.id_to_idx.insert(id.to_string(), next_idx);
+        self.vectors.insert(id.to_string(), vec.to_vec());
         self.dirty = true;
         Ok(())
     }
@@ -111,9 +116,62 @@ impl VectorIndex {
             if idx < self.idx_to_id.len() {
                 self.idx_to_id[idx] = None;
             }
+            self.vectors.remove(id);
             self.dirty = true;
         }
         Ok(())
+    }
+
+    /// Number of tombstoned slots (deleted or superseded by re-upsert) still
+    /// carried in the underlying graph. These never leave `hnsw_rs` on their own.
+    pub fn tombstone_count(&self) -> usize {
+        self.idx_to_id.len().saturating_sub(self.id_to_idx.len())
+    }
+
+    /// Rebuild the graph from the live vectors only, discarding tombstoned points.
+    ///
+    /// `hnsw_rs` cannot delete points, so deletes and re-upserts accumulate dead
+    /// vectors that both bloat the graph and crowd out live results in search
+    /// (which only over-fetches). Compaction reclaims them. Returns `true` if it
+    /// rebuilt. It is a no-op when there is nothing to reclaim, or when the live
+    /// vectors are not fully known (an index loaded from an older on-disk format
+    /// that predates the stored-vectors field — a re-index repopulates them).
+    pub fn compact(&mut self) -> Result<bool> {
+        let live_count = self.id_to_idx.len();
+        if self.tombstone_count() == 0 {
+            return Ok(false);
+        }
+        // Collect live (id, vector) pairs in a stable order. If any live id lacks
+        // a stored vector we cannot faithfully rebuild, so bail without changing
+        // anything.
+        let mut live: Vec<(String, Vec<f32>)> = Vec::with_capacity(live_count);
+        for maybe in &self.idx_to_id {
+            let Some(id) = maybe else { continue };
+            match self.vectors.get(id) {
+                Some(vec) => live.push((id.clone(), vec.clone())),
+                None => return Ok(false),
+            }
+        }
+        debug_assert_eq!(live.len(), live_count);
+
+        let hnsw = Self::new_hnsw();
+        let mut id_to_idx = HashMap::with_capacity(live.len());
+        let mut idx_to_id = Vec::with_capacity(live.len());
+        let mut vectors = HashMap::with_capacity(live.len());
+        for (id, vec) in live {
+            let idx = idx_to_id.len();
+            hnsw.insert((vec.as_slice(), idx));
+            idx_to_id.push(Some(id.clone()));
+            id_to_idx.insert(id.clone(), idx);
+            vectors.insert(id, vec);
+        }
+
+        self.hnsw = hnsw;
+        self.id_to_idx = id_to_idx;
+        self.idx_to_id = idx_to_id;
+        self.vectors = vectors;
+        self.dirty = true;
+        Ok(true)
     }
 
     pub fn save(&mut self) -> Result<()> {
@@ -128,6 +186,7 @@ impl VectorIndex {
         let persisted = PersistedVectorIndex {
             id_to_idx: self.id_to_idx.clone(),
             idx_to_id: self.idx_to_id.clone(),
+            vectors: self.vectors.clone(),
             dim: self.dim,
         };
         if self.hnsw.get_nb_point() == 0 {
@@ -194,11 +253,34 @@ impl VectorIndex {
             .with_context(|| format!("load hnsw graph for {}", path.display()))
     }
 
+    /// Decode the metadata, accepting both the current format and the
+    /// pre-0.1.30 format that had no stored `vectors`.
+    ///
+    /// bincode is positional and non-self-describing, so a newly added field
+    /// cannot be defaulted in place: deserializing an old payload into the new
+    /// struct hits EOF and errors. We therefore try the current layout first and,
+    /// on failure, fall back to the old layout and lift it with an empty
+    /// `vectors` map. Compaction stays disabled (a no-op) until the next
+    /// re-index repopulates the vectors — but the existing graph loads intact,
+    /// so search keeps working across the upgrade with no forced re-embed.
+    fn decode_persisted(bytes: &[u8]) -> Result<PersistedVectorIndex> {
+        if let Ok(current) = bincode::deserialize::<PersistedVectorIndex>(bytes) {
+            return Ok(current);
+        }
+        let legacy: PersistedVectorIndexV1 = bincode::deserialize(bytes)
+            .context("deserialize vector index metadata (legacy fallback)")?;
+        Ok(PersistedVectorIndex {
+            id_to_idx: legacy.id_to_idx,
+            idx_to_id: legacy.idx_to_id,
+            vectors: HashMap::new(),
+            dim: legacy.dim,
+        })
+    }
+
     fn try_load(path: &Path, dim: usize, bin_path: &Path) -> Result<Self> {
         let bytes = fs::read(bin_path)
             .with_context(|| format!("read vector metadata {}", bin_path.display()))?;
-        let persisted: PersistedVectorIndex =
-            bincode::deserialize(&bytes).context("deserialize vector index metadata")?;
+        let persisted = Self::decode_persisted(&bytes)?;
         if persisted.dim != dim {
             bail!(
                 "vector index dim mismatch for {}: on disk {}, requested {}",
@@ -212,24 +294,29 @@ impl VectorIndex {
             hnsw,
             id_to_idx: persisted.id_to_idx,
             idx_to_id: persisted.idx_to_id,
+            vectors: persisted.vectors,
             dim,
             path: path.to_path_buf(),
             dirty: false,
         })
     }
 
-    fn new_empty(path: &Path, dim: usize, dirty: bool) -> Self {
-        let hnsw = Hnsw::new(
+    fn new_hnsw() -> Hnsw<'static, f32, DistCosine> {
+        Hnsw::new(
             DEFAULT_MAX_CONNECTIONS,
             DEFAULT_MAX_ELEMENTS_HINT,
             DEFAULT_MAX_LAYER,
             DEFAULT_EF_CONSTRUCTION,
             DistCosine {},
-        );
+        )
+    }
+
+    fn new_empty(path: &Path, dim: usize, dirty: bool) -> Self {
         Self {
-            hnsw,
+            hnsw: Self::new_hnsw(),
             id_to_idx: HashMap::new(),
             idx_to_id: Vec::new(),
+            vectors: HashMap::new(),
             dim,
             path: path.to_path_buf(),
             dirty,
@@ -325,6 +412,19 @@ impl VectorIndex {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PersistedVectorIndex {
+    id_to_idx: HashMap<String, usize>,
+    idx_to_id: Vec<Option<String>>,
+    // Live vectors, needed for compaction. Old indexes that predate this field
+    // are handled by the explicit legacy fallback in `decode_persisted` (bincode
+    // cannot default a missing field), not by serde defaults.
+    vectors: HashMap<String, Vec<f32>>,
+    dim: usize,
+}
+
+/// The pre-0.1.30 on-disk metadata layout (no stored `vectors`). Kept only so
+/// `decode_persisted` can read indexes written by earlier versions.
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedVectorIndexV1 {
     id_to_idx: HashMap<String, usize>,
     idx_to_id: Vec<Option<String>>,
     dim: usize,
@@ -435,6 +535,115 @@ mod tests {
         let results = recovered.search(&vec, 3)?;
         assert!(results.is_empty());
         assert!(!temp.path().join("vectors.bin").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn compact_reclaims_tombstones_and_preserves_search() -> Result<()> {
+        let temp = tempdir()?;
+        let mut index = VectorIndex::open_or_create(&temp.path().join("vectors"), 4)?;
+        index.upsert("a", &[1.0, 0.0, 0.0, 0.0])?;
+        index.upsert("b", &[0.0, 1.0, 0.0, 0.0])?;
+        index.upsert("c", &[0.0, 0.0, 1.0, 0.0])?;
+        index.upsert("d", &[0.0, 0.0, 0.0, 1.0])?;
+        // Tombstones: re-upsert `a` (moves it), delete `c`.
+        index.upsert("a", &[0.9, 0.1, 0.0, 0.0])?;
+        index.delete("c")?;
+        assert_eq!(index.tombstone_count(), 2);
+
+        assert!(index.compact()?, "compaction should rebuild");
+        assert_eq!(index.tombstone_count(), 0, "tombstones reclaimed");
+
+        assert_eq!(index.search(&[1.0, 0.0, 0.0, 0.0], 1)?[0].0, "a");
+        assert_eq!(index.search(&[0.0, 1.0, 0.0, 0.0], 1)?[0].0, "b");
+        assert_eq!(index.search(&[0.0, 0.0, 0.0, 1.0], 1)?[0].0, "d");
+        let near_c = index.search(&[0.0, 0.0, 1.0, 0.0], 4)?;
+        assert!(
+            !near_c.iter().any(|(id, _)| id == "c"),
+            "deleted id must not resurface: {near_c:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_persisted_reads_legacy_format_without_vectors() {
+        // A pre-0.1.30 metadata payload had no `vectors` field. bincode is
+        // positional, so it must be decoded via the explicit legacy fallback.
+        let legacy = super::PersistedVectorIndexV1 {
+            id_to_idx: std::collections::HashMap::from([("a".to_string(), 0usize)]),
+            idx_to_id: vec![Some("a".to_string())],
+            dim: 8,
+        };
+        let bytes = bincode::serialize(&legacy).expect("serialize legacy");
+
+        // The current struct cannot deserialize the old bytes directly...
+        assert!(
+            bincode::deserialize::<super::PersistedVectorIndex>(&bytes).is_err(),
+            "old bincode payload must not silently parse as the new struct"
+        );
+        // ...but the fallback lifts it, with vectors empty (compaction disabled
+        // until a re-index repopulates them).
+        let decoded = VectorIndex::decode_persisted(&bytes).expect("legacy fallback");
+        assert_eq!(decoded.dim, 8);
+        assert_eq!(decoded.idx_to_id, vec![Some("a".to_string())]);
+        assert_eq!(decoded.id_to_idx.get("a"), Some(&0));
+        assert!(decoded.vectors.is_empty());
+    }
+
+    #[test]
+    fn compact_is_noop_without_tombstones() -> Result<()> {
+        let temp = tempdir()?;
+        let mut index = VectorIndex::open_or_create(&temp.path().join("vectors"), 4)?;
+        index.upsert("a", &[1.0, 0.0, 0.0, 0.0])?;
+        index.upsert("b", &[0.0, 1.0, 0.0, 0.0])?;
+        assert_eq!(index.tombstone_count(), 0);
+        assert!(!index.compact()?, "nothing to reclaim");
+        Ok(())
+    }
+
+    #[test]
+    fn compact_then_save_load_roundtrip_is_stable() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("vectors");
+        let mut index = VectorIndex::open_or_create(&path, 8)?;
+        let mut rng = StdRng::seed_from_u64(11);
+        let mut vectors = Vec::new();
+        for i in 0..50usize {
+            let v = (0..8)
+                .map(|_| rng.gen_range(-1.0..1.0))
+                .collect::<Vec<f32>>();
+            index.upsert(&format!("id-{i}"), &v)?;
+            vectors.push(v);
+        }
+        // Tombstone the first half by re-upserting it.
+        for (i, v) in vectors.iter().enumerate().take(25) {
+            index.upsert(&format!("id-{i}"), v)?;
+        }
+        assert_eq!(index.tombstone_count(), 25);
+
+        assert!(index.compact()?);
+        assert_eq!(index.tombstone_count(), 0);
+        let expected = index.search(&vectors[40], 5)?;
+        index.save()?;
+        drop(index);
+
+        let loaded = VectorIndex::open_or_create(&path, 8)?;
+        let actual = loaded.search(&vectors[40], 5)?;
+        assert_eq!(expected, actual, "search stable across compact + save/load");
+        Ok(())
+    }
+
+    #[test]
+    fn compact_handles_all_deleted() -> Result<()> {
+        let temp = tempdir()?;
+        let mut index = VectorIndex::open_or_create(&temp.path().join("vectors"), 4)?;
+        index.upsert("a", &[1.0, 0.0, 0.0, 0.0])?;
+        index.upsert("b", &[0.0, 1.0, 0.0, 0.0])?;
+        index.delete("a")?;
+        index.delete("b")?;
+        assert!(index.compact()?);
+        assert_eq!(index.tombstone_count(), 0);
+        assert!(index.search(&[1.0, 0.0, 0.0, 0.0], 5)?.is_empty());
         Ok(())
     }
 

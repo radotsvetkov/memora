@@ -292,11 +292,23 @@ impl<'a> Indexer<'a> {
             }
         }
 
-        self.vector_index
-            .lock()
-            .map_err(|_| anyhow::anyhow!("vector index mutex poisoned"))?
-            .save()
-            .context("save vector index after full rebuild")?;
+        {
+            // A full rebuild re-upserts every note, tombstoning all prior vectors
+            // in the (delete-less) HNSW graph. Compact before saving so the graph
+            // does not grow without bound across rebuilds and search is not
+            // crowded by dead points.
+            let mut vector_index = self
+                .vector_index
+                .lock()
+                .map_err(|_| anyhow::anyhow!("vector index mutex poisoned"))?;
+            let reclaimed = vector_index.tombstone_count();
+            if vector_index.compact()? {
+                tracing::info!(reclaimed, "compacted vector index after full rebuild");
+            }
+            vector_index
+                .save()
+                .context("save vector index after full rebuild")?;
+        }
         Ok(stats)
     }
 

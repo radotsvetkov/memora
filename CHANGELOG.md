@@ -8,6 +8,7 @@
 - `[embed] provider = "local"` is now wired to the on-device `fastembed` BGE-small embedder (build with `--features local-embed`). Previously this provider silently fell back to deterministic vectors; without the feature it now fails with clear guidance instead.
 
 ### Fixed
+- Vector index compaction. `hnsw_rs` has no delete, so every re-index and deletion left the old vector in the graph forever — unbounded growth, and (worse) accumulated tombstones could crowd out live results in search, which only over-fetches. The index now keeps its live vectors and compacts (rebuilds from them, dropping tombstones) at the end of every `full_rebuild`. Old on-disk indexes load intact via an explicit legacy decoder (a `serde(default)` would not have worked: bincode is positional and cannot default a missing field), so the upgrade needs no forced re-embed.
 - Contradiction detection during `full_rebuild` is now deterministic. It previously ran inline during the parallel per-note phase, doing a non-transactional read-then-write that raced across notes (so a cross-note contradiction could be detected or missed depending on commit timing). It now runs once, after every note's claims are committed, in a single ordered pass. `claims_contradict` verdicts are cached by claim-pair tuple, so each pair is checked once.
 
 ### Changed
