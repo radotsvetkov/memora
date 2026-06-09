@@ -20,6 +20,11 @@ eula = false
 [package.metadata.dist]
 dist = true
 
+[features]
+# PDF ingestion (`memora ingest file.pdf`). Off by default to keep the binary and
+# supply chain lean; enable with `cargo install memora-cli --features pdf`.
+pdf = ["dep:pdf-extract"]
+
 [[bin]]
 name = "memora"
 path = "src/main.rs"
@@ -49,6 +54,7 @@ memora-llm.workspace = true
 memora-mcp.workspace = true
 rmcp = { version = "0.1", features = ["transport-io"] }
 tempfile.workspace = true
+pdf-extract = { version = "0.7", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -166,6 +166,15 @@ memora index --vault ~/your-vault
 memora query "What did we decide about drift's serialization format?" --vault ~/your-vault
 ```
 
+Bring in outside documents so they become verifiable too. `memora ingest` turns a
+PDF, text file, or transcript into a vault note, then index picks it up:
+
+```bash
+memora ingest contract.pdf --vault ~/your-vault --region legal   # PDF needs --features pdf
+memora ingest standup.vtt  --vault ~/your-vault --region transcripts
+memora index --vault ~/your-vault
+```
+
 Use it from Claude Desktop (`claude_desktop_config.json`):
 
 ```json
@@ -194,7 +203,7 @@ Issues, edge cases, and design discussions are welcome on the [issue tracker](ht
 
 - Mobile and non-Obsidian access
 - Local LLM at production quality
-- PDF, web clipping, and transcript ingestion
+- Web page clipping (PDF, text, and transcript ingestion are supported via `memora ingest`)
 - A GUI for the claim graph and atlas review
 - Entailment scoring (today: provenance integrity only)
 

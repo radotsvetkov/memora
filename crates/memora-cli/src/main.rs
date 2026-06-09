@@ -19,6 +19,8 @@ enum Commands {
     Demo(commands::demo::DemoArgs),
     /// Verify an AI answer's citations against a vault; exit non-zero on failure.
     Verify(commands::verify::VerifyArgs),
+    /// Ingest a document (PDF/text/markdown/transcript) into the vault as a note.
+    Ingest(commands::ingest::IngestArgs),
     Init(commands::init::InitArgs),
     Index(commands::index::IndexArgs),
     Watch(commands::watch::WatchArgs),
@@ -50,6 +52,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Demo(args) => commands::demo::run(args).await?,
         Commands::Verify(args) => commands::verify::run(args).await?,
+        Commands::Ingest(args) => commands::ingest::run(args)?,
         Commands::Init(args) => commands::init::run(args)?,
         Commands::Index(args) => commands::index::run(args).await?,
         Commands::Watch(args) => commands::watch::run(args).await?,

@@ -4,6 +4,7 @@ pub mod consolidate;
 pub mod demo;
 pub mod doctor;
 pub mod index;
+pub mod ingest;
 pub mod init;
 pub mod privacy;
 pub mod query;

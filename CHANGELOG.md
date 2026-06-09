@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- `memora ingest <file>` — bring external documents into the vault as notes so they become verifiable through the normal index → extract → verify pipeline. Supports plain text, markdown, VTT/SRT transcripts, and PDF (PDF behind the `pdf` feature: `cargo install memora-cli --features pdf`). Re-ingesting the same file updates the same note rather than duplicating it. See `docs/src/ingesting.md`.
 - `[embed] provider = "local"` is now wired to the on-device `fastembed` BGE-small embedder (build with `--features local-embed`). Previously this provider silently fell back to deterministic vectors; without the feature it now fails with clear guidance instead.
 
 ### Fixed
