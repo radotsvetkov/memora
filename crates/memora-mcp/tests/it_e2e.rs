@@ -12,6 +12,23 @@ use memora_core::{Embedder, Index, Vault, VaultEvent, VectorIndex};
 use memora_mcp::tools::MemoraRuntime;
 use tempfile::tempdir;
 
+/// Pin the vault to a fully local, deterministic embedder (and a local LLM
+/// provider that stays gated off without `MEMORA_ENABLE_NETWORK_LLM`). Without
+/// this, `VaultConfig::load` falls back to the developer's global
+/// `~/.config/memora/config.toml`; if that sets `[embed] provider = "ollama"`,
+/// the runtime makes a real HTTP call to ollama and the test fails when the
+/// daemon isn't running. A vault-local config is always preferred over the
+/// global one, so this keeps the runtime hermetic.
+fn write_hermetic_config(vault: &std::path::Path) {
+    let dir = vault.join(".memora");
+    fs::create_dir_all(&dir).expect("create .memora dir");
+    fs::write(
+        dir.join("config.toml"),
+        "[embed]\nprovider = \"deterministic\"\nmodel = \"memora/deterministic\"\ndim = 64\n\n[llm]\nprovider = \"ollama\"\n",
+    )
+    .expect("write hermetic config");
+}
+
 fn seed_note(vault: &std::path::Path, index: &Index) -> Result<String> {
     let now = Utc
         .with_ymd_and_hms(2026, 4, 1, 0, 0, 0)
@@ -85,6 +102,7 @@ async fn mcp_runtime_e2e_tools() -> Result<()> {
     let index_db = vault.join(".memora").join("memora.db");
     let vector = vault.join(".memora").join("vectors");
     fs::create_dir_all(vault.join(".memora"))?;
+    write_hermetic_config(&vault);
     let index = Index::open(&index_db)?;
     let _seed_id = seed_note(&vault, &index)?;
     fs::write(vault.join("world_map.md"), "# World Map\n")?;
@@ -151,6 +169,7 @@ async fn moved_note_updates_region_in_frontmatter_index_and_query() -> Result<()
     let index_db = vault_root.join(".memora").join("memora.db");
     let vector_index_path = vault_root.join(".memora").join("vectors");
     fs::create_dir_all(vault_root.join(".memora"))?;
+    write_hermetic_config(&vault_root);
 
     let index = Index::open(&index_db)?;
     let vault = Vault::new(&vault_root);
@@ -235,6 +254,7 @@ async fn capture_rejects_path_traversal_region() {
     let temp = tempdir().expect("tempdir");
     let vault = temp.path().join("vault");
     fs::create_dir_all(&vault).expect("mkdir");
+    write_hermetic_config(&vault);
     let runtime = MemoraRuntime::with_storage(
         vault.clone(),
         vault.join(".memora/memora.db"),
@@ -264,6 +284,7 @@ async fn get_note_redacts_secret_body() {
     fs::create_dir_all(&vault).expect("mkdir");
     let index_db = vault.join(".memora/memora.db");
     fs::create_dir_all(vault.join(".memora")).expect("mkdir");
+    write_hermetic_config(&vault);
     let index = Index::open(&index_db).expect("open index");
     let now = Utc
         .with_ymd_and_hms(2026, 4, 1, 0, 0, 0)
