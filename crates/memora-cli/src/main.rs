@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Demo(args) => commands::demo::run(args).await?,
         Commands::Verify(args) => commands::verify::run(args).await?,
-        Commands::Ingest(args) => commands::ingest::run(args)?,
+        Commands::Ingest(args) => commands::ingest::run(args).await?,
         Commands::Init(args) => commands::init::run(args)?,
         Commands::Index(args) => commands::index::run(args).await?,
         Commands::Watch(args) => commands::watch::run(args).await?,

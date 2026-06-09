@@ -176,8 +176,9 @@ Bring in outside documents so they become verifiable too. `memora ingest` turns 
 PDF, text file, or transcript into a vault note, then index picks it up:
 
 ```bash
-memora ingest contract.pdf --vault ~/your-vault --region legal   # PDF needs --features pdf
-memora ingest standup.vtt  --vault ~/your-vault --region transcripts
+memora ingest contract.pdf             --vault ~/your-vault --region legal    # PDF needs --features pdf
+memora ingest standup.vtt              --vault ~/your-vault --region transcripts
+memora ingest https://example.com/post --vault ~/your-vault --region web      # URL needs --features web
 memora index --vault ~/your-vault
 ```
 
@@ -209,7 +210,6 @@ Issues, edge cases, and design discussions are welcome on the [issue tracker](ht
 
 - Mobile and non-Obsidian access
 - Local LLM at production quality
-- Web page clipping (PDF, text, and transcript ingestion are supported via `memora ingest`)
 - A GUI for the claim graph and atlas review
 - Local NLI-model entailment (today entailment is optional and LLM-judged via `memora verify --entailment`, not a local model)
 

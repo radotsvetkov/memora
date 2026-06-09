@@ -107,6 +107,81 @@ fn ingest_pdf_without_feature_errors_with_guidance() {
     );
 }
 
+/// With the `web` feature, a local HTML file is reduced to readable text: content
+/// elements are kept, the title becomes the summary, scripts/styles are dropped.
+#[cfg(feature = "web")]
+#[test]
+fn ingest_html_file_extracts_readable_text() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src = temp.path().join("page.html");
+    fs::write(
+        &src,
+        "<html><head><title>Drift Notes</title></head><body><nav>Home</nav>\
+         <script>var x = 1;</script><article><h1>Drift</h1>\
+         <p>Drift uses MessagePack.</p></article><style>.a{color:red}</style></body></html>",
+    )
+    .expect("write");
+    let vault = temp.path().join("vault");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("ingest")
+        .arg(&src)
+        .args(["--vault"])
+        .arg(&vault)
+        .assert()
+        .success();
+
+    let notes: Vec<_> = fs::read_dir(vault.join("ingested"))
+        .expect("region dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "md"))
+        .collect();
+    assert_eq!(notes.len(), 1);
+    let content = fs::read_to_string(&notes[0]).expect("read note");
+    assert!(
+        content.contains("MessagePack"),
+        "extracted body:\n{content}"
+    );
+    assert!(
+        content.contains("Drift Notes"),
+        "title became summary:\n{content}"
+    );
+    assert!(
+        !content.contains("var x"),
+        "script content excluded:\n{content}"
+    );
+    assert!(
+        !content.contains("color:red"),
+        "style content excluded:\n{content}"
+    );
+}
+
+/// Without the `web` feature, an HTML file fails loudly with guidance.
+/// (Skipped when built with `--features web`.)
+#[cfg(not(feature = "web"))]
+#[test]
+fn ingest_html_without_feature_errors_with_guidance() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src = temp.path().join("page.html");
+    fs::write(&src, "<p>hello</p>").expect("write");
+
+    let assert = Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("ingest")
+        .arg(&src)
+        .args(["--vault"])
+        .arg(temp.path().join("vault"))
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        stderr.contains("web"),
+        "names the web feature to enable:\n{stderr}"
+    );
+}
+
 /// Unsupported extensions are rejected with a clear message.
 #[test]
 fn ingest_rejects_unsupported_extension() {

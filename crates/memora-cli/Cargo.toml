@@ -24,6 +24,9 @@ dist = true
 # PDF ingestion (`memora ingest file.pdf`). Off by default to keep the binary and
 # supply chain lean; enable with `cargo install memora-cli --features pdf`.
 pdf = ["dep:pdf-extract"]
+# Web-page ingestion (`memora ingest <url>` or a `.html` file). Off by default;
+# enable with `cargo install memora-cli --features web`.
+web = ["dep:reqwest", "dep:scraper"]
 
 [[bin]]
 name = "memora"
@@ -55,6 +58,8 @@ memora-mcp.workspace = true
 rmcp = { version = "0.1", features = ["transport-io"] }
 tempfile.workspace = true
 pdf-extract = { version = "0.7", optional = true }
+reqwest = { workspace = true, optional = true }
+scraper = { version = "0.20", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

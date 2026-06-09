@@ -2,8 +2,10 @@
 //! through the existing index -> extract -> verify pipeline. memora's whole model
 //! is byte-span verification over markdown, so ingestion is just: turn the source
 //! into clean markdown text, write it as a note with valid frontmatter, and let
-//! `memora index` pick it up. Supported: PDF (with the `pdf` feature), plain text,
-//! markdown, and VTT/SRT transcripts.
+//! `memora index` pick it up.
+//!
+//! Supported: plain text, markdown, VTT/SRT transcripts, PDF (with the `pdf`
+//! feature), and web pages — a URL or `.html` file (with the `web` feature).
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -15,9 +17,10 @@ use memora_core::vault_path::validate_region;
 
 #[derive(Debug, Args)]
 pub struct IngestArgs {
-    /// File to ingest: .pdf (needs the `pdf` feature), .txt, .md, .markdown, .vtt, .srt.
-    #[arg(value_name = "file")]
-    pub file: PathBuf,
+    /// File or URL to ingest: a URL or `.html` (needs the `web` feature), `.pdf`
+    /// (needs the `pdf` feature), `.txt`, `.md`, `.markdown`, `.vtt`, `.srt`.
+    #[arg(value_name = "file_or_url")]
+    pub file: String,
     /// Vault to ingest into.
     #[arg(long, default_value = "vault")]
     pub vault: PathBuf,
@@ -29,10 +32,7 @@ pub struct IngestArgs {
     pub privacy: String,
 }
 
-pub fn run(args: IngestArgs) -> Result<()> {
-    if !args.file.is_file() {
-        bail!("file not found: {}", args.file.display());
-    }
+pub async fn run(args: IngestArgs) -> Result<()> {
     let privacy: Privacy = args.privacy.parse().map_err(|_| {
         anyhow!(
             "invalid --privacy '{}' (use public|private|secret)",
@@ -40,24 +40,49 @@ pub fn run(args: IngestArgs) -> Result<()> {
         )
     })?;
 
-    let ext = args
-        .file
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let body = clean_text(&extract_text(&args.file, &ext)?);
+    // A source is either a URL (fetched) or a local file (read by extension).
+    let (raw_body, id_seed, stem, title, kind) = if is_url(&args.file) {
+        let (body, title) = fetch_and_extract(&args.file).await?;
+        (
+            body,
+            args.file.clone(),
+            url_slug(&args.file),
+            title,
+            "web".to_string(),
+        )
+    } else {
+        let path = PathBuf::from(&args.file);
+        if !path.is_file() {
+            bail!("file not found: {}", path.display());
+        }
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let (body, title) = extract_file(&path, &ext)?;
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("document")
+            .to_string();
+        let kind = if ext.is_empty() {
+            "file".to_string()
+        } else {
+            ext
+        };
+        (body, args.file.clone(), stem, title, kind)
+    };
+
+    let body = clean_text(&raw_body);
     if body.trim().is_empty() {
-        bail!("no text could be extracted from {}", args.file.display());
+        bail!("no text could be extracted from {}", args.file);
     }
 
-    let stem = args
-        .file
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("document");
-    let id = format!("{}-{}", slugify(stem), short_hash(&args.file));
-    let summary = derive_summary(&body, stem);
+    let id = format!("{}-{}", slugify(&stem), short_hash(&id_seed));
+    let summary = title
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| derive_summary(&body, &stem));
 
     let region_dir =
         validate_region(&args.vault, &args.region).map_err(|e| anyhow!("invalid --region: {e}"))?;
@@ -74,17 +99,13 @@ pub fn run(args: IngestArgs) -> Result<()> {
         created: now,
         updated: now,
         summary,
-        tags: vec!["ingested".to_string(), ext.clone()],
+        tags: vec!["ingested".to_string(), kind],
         refs: Vec::new(),
     };
     rewrite_with_frontmatter(&note_path, &frontmatter, &body)
         .map_err(|e| anyhow!("write note: {e}"))?;
 
-    println!(
-        "Ingested {} -> {}",
-        args.file.display(),
-        note_path.display()
-    );
+    println!("Ingested {} -> {}", args.file, note_path.display());
     println!(
         "Next: memora index --vault {}   (extracts claims and makes it verifiable)",
         args.vault.display()
@@ -92,18 +113,30 @@ pub fn run(args: IngestArgs) -> Result<()> {
     Ok(())
 }
 
-fn extract_text(path: &Path, ext: &str) -> Result<String> {
+fn is_url(s: &str) -> bool {
+    s.starts_with("http://") || s.starts_with("https://")
+}
+
+/// Extract a local file by extension. Returns the text and an optional title
+/// (only HTML carries one).
+fn extract_file(path: &Path, ext: &str) -> Result<(String, Option<String>)> {
     match ext {
-        "txt" | "text" | "md" | "markdown" => {
-            std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))
-        }
-        "vtt" | "srt" => Ok(strip_subtitles(
-            &std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?,
+        "txt" | "text" | "md" | "markdown" => Ok((
+            std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?,
+            None,
         )),
-        "pdf" => extract_pdf(path),
+        "vtt" | "srt" => Ok((
+            strip_subtitles(
+                &std::fs::read_to_string(path)
+                    .with_context(|| format!("read {}", path.display()))?,
+            ),
+            None,
+        )),
+        "pdf" => Ok((extract_pdf(path)?, None)),
+        "html" | "htm" => extract_html_file(path),
         other => bail!(
-            "unsupported file type '.{other}'. Supported: pdf (with the `pdf` feature), \
-             txt, md, markdown, vtt, srt"
+            "unsupported file type '.{other}'. Supported: a URL or .html (with the `web` \
+             feature), .pdf (with the `pdf` feature), .txt, .md, .markdown, .vtt, .srt"
         ),
     }
 }
@@ -121,6 +154,75 @@ fn extract_pdf(_path: &Path) -> Result<String> {
          (e.g. `cargo install memora-cli --features pdf`). Or convert the PDF to \
          text/markdown first and ingest that."
     )
+}
+
+#[cfg(feature = "web")]
+fn extract_html_file(path: &Path) -> Result<(String, Option<String>)> {
+    let html = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    Ok(extract_html(&html))
+}
+
+#[cfg(not(feature = "web"))]
+fn extract_html_file(_path: &Path) -> Result<(String, Option<String>)> {
+    bail!(
+        "HTML ingestion needs memora built with the `web` feature \
+         (e.g. `cargo install memora-cli --features web`)."
+    )
+}
+
+#[cfg(feature = "web")]
+async fn fetch_and_extract(url: &str) -> Result<(String, Option<String>)> {
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("memora-ingest/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("build HTTP client")?;
+    let html = client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("fetch {url}"))?
+        .error_for_status()
+        .with_context(|| format!("fetch {url}"))?
+        .text()
+        .await
+        .with_context(|| format!("read response body from {url}"))?;
+    Ok(extract_html(&html))
+}
+
+#[cfg(not(feature = "web"))]
+async fn fetch_and_extract(_url: &str) -> Result<(String, Option<String>)> {
+    bail!(
+        "Ingesting a URL needs memora built with the `web` feature \
+         (e.g. `cargo install memora-cli --features web`)."
+    )
+}
+
+/// Readable-text extraction: collect the text of content elements (paragraphs,
+/// headings, list items, quotes, code) and the page title. Selecting only content
+/// elements naturally skips `<script>`, `<style>`, and most navigation chrome.
+#[cfg(feature = "web")]
+fn extract_html(html: &str) -> (String, Option<String>) {
+    use scraper::{Html, Selector};
+
+    let doc = Html::parse_document(html);
+    let normalize = |s: String| s.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    let title = Selector::parse("title")
+        .ok()
+        .and_then(|sel| doc.select(&sel).next())
+        .map(|el| normalize(el.text().collect::<String>()))
+        .filter(|t| !t.is_empty());
+
+    let content = Selector::parse("p, h1, h2, h3, h4, h5, h6, li, blockquote, pre")
+        .expect("static selector is valid");
+    let mut parts = Vec::new();
+    for el in doc.select(&content) {
+        let text = normalize(el.text().collect::<String>());
+        if !text.is_empty() {
+            parts.push(text);
+        }
+    }
+    (parts.join("\n\n"), title)
 }
 
 /// Normalize extracted text: drop carriage returns and form feeds, and collapse
@@ -145,7 +247,7 @@ fn clean_text(raw: &str) -> String {
     out.trim().to_string()
 }
 
-/// A filesystem-safe, readable id stem from the source filename.
+/// A filesystem-safe, readable id stem from a filename or URL.
 fn slugify(s: &str) -> String {
     let mut out = String::new();
     let mut prev_dash = false;
@@ -166,10 +268,20 @@ fn slugify(s: &str) -> String {
     }
 }
 
-/// Stable short id suffix derived from the source path, so re-ingesting the same
-/// file updates the same note rather than creating a duplicate.
-fn short_hash(path: &Path) -> String {
-    blake3::hash(path.to_string_lossy().as_bytes())
+/// The slug-able part of a URL: host + path, without scheme or query/fragment.
+fn url_slug(url: &str) -> String {
+    let without_scheme = url.split("://").nth(1).unwrap_or(url);
+    let without_query = without_scheme
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(without_scheme);
+    slugify(without_query)
+}
+
+/// Stable short id suffix derived from the source path/URL, so re-ingesting the
+/// same source updates the same note rather than creating a duplicate.
+fn short_hash(seed: &str) -> String {
+    blake3::hash(seed.as_bytes())
         .to_hex()
         .to_string()
         .chars()
@@ -223,6 +335,23 @@ mod tests {
     }
 
     #[test]
+    fn url_slug_drops_scheme_and_query() {
+        assert_eq!(
+            url_slug("https://example.com/blog/post?utm=1#top"),
+            "example-com-blog-post"
+        );
+        assert_eq!(url_slug("http://example.com/"), "example-com");
+    }
+
+    #[test]
+    fn is_url_detects_http_schemes() {
+        assert!(is_url("https://example.com"));
+        assert!(is_url("http://example.com"));
+        assert!(!is_url("/local/file.html"));
+        assert!(!is_url("file.txt"));
+    }
+
+    #[test]
     fn clean_text_strips_control_chars_and_collapses_blank_runs() {
         let raw = "Title\r\n\u{c}\n\n\nBody line one  \n\n\n\nBody line two\n\n";
         let cleaned = clean_text(raw);
@@ -255,5 +384,24 @@ mod tests {
         );
         let long = "x".repeat(500);
         assert_eq!(derive_summary(&long, "stem").chars().count(), 120);
+    }
+
+    #[cfg(feature = "web")]
+    #[test]
+    fn extract_html_keeps_content_and_drops_scripts() {
+        let html = r#"<html><head><title>  My Page  </title></head>
+            <body><nav>Home About</nav><script>var x = 1;</script>
+            <article><h1>Heading</h1><p>First paragraph.</p><p>Second paragraph.</p></article>
+            <style>.a{color:red}</style></body></html>"#;
+        let (text, title) = extract_html(html);
+        assert_eq!(title.as_deref(), Some("My Page"));
+        assert!(text.contains("Heading"));
+        assert!(text.contains("First paragraph."));
+        assert!(text.contains("Second paragraph."));
+        assert!(!text.contains("var x"), "script content excluded: {text}");
+        assert!(
+            !text.contains("color:red"),
+            "style content excluded: {text}"
+        );
     }
 }
