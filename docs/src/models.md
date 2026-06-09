@@ -52,3 +52,15 @@ provider = "ollama"
 model = "nomic-embed-text"
 dim = 768
 ```
+
+For a fully on-device embedder with no Ollama daemon, build with
+`--features local-embed` and use the bundled `fastembed` BGE-small model:
+
+```toml
+[embed]
+provider = "local"
+dim = 384
+```
+
+`provider = "openai"` is also supported (cloud), gated behind
+`MEMORA_ENABLE_NETWORK_LLM=1` like the cloud chat providers.

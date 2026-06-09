@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `[embed] provider = "local"` is now wired to the on-device `fastembed` BGE-small embedder (build with `--features local-embed`). Previously this provider silently fell back to deterministic vectors; without the feature it now fails with clear guidance instead.
+
 ### Fixed
 - Contradiction detection during `full_rebuild` is now deterministic. It previously ran inline during the parallel per-note phase, doing a non-transactional read-then-write that raced across notes (so a cross-note contradiction could be detected or missed depending on commit timing). It now runs once, after every note's claims are committed, in a single ordered pass. `claims_contradict` verdicts are cached by claim-pair tuple, so each pair is checked once.
 

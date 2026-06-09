@@ -40,9 +40,29 @@ pub fn build_embedder(embed: &EmbedConfig, llm: &LlmConfig) -> Result<Arc<dyn Em
                 OpenAiEmbedder::new().context("configure OpenAI embedding client")?,
             ))
         }
+        // Fully on-device embeddings (fastembed / BGE-small, no network, no
+        // daemon). Requires building with the `local-embed` feature.
+        "local" => build_local_embedder(),
         // `deterministic` (and any unrecognised value) stays fully local.
         _ => Ok(Arc::new(DeterministicEmbedder::new(embed.dim))),
     }
+}
+
+#[cfg(feature = "local-embed")]
+fn build_local_embedder() -> Result<Arc<dyn Embedder>> {
+    Ok(Arc::new(
+        super::local::LocalEmbedder::new().context("initialize local embedding model")?,
+    ))
+}
+
+#[cfg(not(feature = "local-embed"))]
+fn build_local_embedder() -> Result<Arc<dyn Embedder>> {
+    Err(anyhow!(
+        "embed provider `local` needs memora built with the `local-embed` feature \
+         (e.g. `cargo install memora-cli --features local-embed`). It runs a fully \
+         on-device BGE-small model (384-dim, set `[embed] dim = 384`), no network and \
+         no daemon. Without that feature, use `provider = \"ollama\"` or `\"deterministic\"`."
+    ))
 }
 
 fn log_ollama_embed_config_warnings(embed: &EmbedConfig, llm: &LlmConfig) {
@@ -152,5 +172,26 @@ mod gate_tests {
         build_embedder(&embed, &local_llm())
             .map(|_| ())
             .expect("local embedder must build without the network flag");
+    }
+
+    // When built WITHOUT the local-embed feature, `provider = "local"` must fail
+    // loudly with guidance instead of silently falling back to deterministic.
+    #[test]
+    #[cfg(not(feature = "local-embed"))]
+    fn local_provider_without_feature_errors_clearly() {
+        let embed = EmbedConfig {
+            provider: "local".into(),
+            model: "BAAI/bge-small-en-v1.5".into(),
+            dim: 384,
+            embedding_model: None,
+            endpoint: None,
+        };
+        let err = build_embedder(&embed, &local_llm())
+            .map(|_| ())
+            .expect_err("local provider must error without the local-embed feature");
+        assert!(
+            err.to_string().contains("local-embed"),
+            "error should name the feature to enable, got: {err}"
+        );
     }
 }

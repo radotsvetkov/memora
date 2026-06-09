@@ -130,7 +130,9 @@ model = "claude-haiku-4-5-20251001"
 
 Indexing a 100-note vault costs about $0.30 and takes roughly 5 to 10 minutes at `parallelism = 8` (estimates from development runs, not a published benchmark). Anthropic's free tier caps requests at 50 per minute, so add at least $5 of credit to reach Tier 1, or set `parallelism = 1` to stay under the free limit.
 
-**OpenAI gpt-5-mini** is a comparable alternative at similar cost. **Ollama** (for example `qwen2.5:32b-instruct-q5_K_M`) covers the local-only case. Honestly, below 32B parameters local extraction degrades: it hallucinates relationships and produces shallow triples. Embeddings run locally by default with `nomic-embed-text`.
+**OpenAI gpt-5-mini** is a comparable alternative at similar cost. **Ollama** (for example `qwen2.5:32b-instruct-q5_K_M`) covers the local-only case. Honestly, below 32B parameters local extraction degrades: it hallucinates relationships and produces shallow triples. Embeddings run locally by default with `nomic-embed-text` (via Ollama). For a fully
+on-device embedder with no daemon, build with `--features local-embed` and set
+`[embed] provider = "local"` (bundled `fastembed` BGE-small, 384-dim).
 
 ## Quickstart
 

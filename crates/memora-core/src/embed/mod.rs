@@ -10,6 +10,8 @@ pub mod openai;
 
 pub use build::build_embedder;
 pub use deterministic::DeterministicEmbedder;
+#[cfg(feature = "local-embed")]
+pub use local::LocalEmbedder;
 pub use ollama::OllamaEmbedder;
 pub use openai::OpenAiEmbedder;
 
