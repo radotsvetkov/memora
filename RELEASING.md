@@ -79,3 +79,33 @@ To switch to **automatic** Homebrew publishing instead, add `"homebrew"` to
 `publish-jobs = ["homebrew"]` in `dist-workspace.toml`, create a fine-grained
 `HOMEBREW_TAP_TOKEN` PAT (contents:write on the tap) as a repo secret, and run
 `dist generate`.
+
+## 5. Publish the Python wrapper (memora-verify) to PyPI
+
+The wrapper versions independently of the Rust crates (`bindings/python/pyproject.toml`).
+Publishing uses PyPI's **Trusted Publishing** (OIDC) — no token is stored in CI.
+
+**One-time setup (do this once, before the first tag):**
+
+1. Log into [pypi.org](https://pypi.org), go to
+   [Publishing](https://pypi.org/manage/account/publishing/), and add a
+   pending publisher:
+   - PyPI project name: `memora-verify`
+   - Owner: `radotsvetkov`, repository: `memora`
+   - Workflow filename: `python.yml`
+   - Environment name: `pypi`
+2. That's it — no secret to create. The first successful run of the `publish`
+   job in `.github/workflows/python.yml` creates the PyPI project.
+
+**Every release after that:**
+
+```bash
+# bump bindings/python/pyproject.toml's version first, commit, then:
+git tag python-vX.Y.Z
+git push origin python-vX.Y.Z
+```
+
+The `publish` job in `.github/workflows/python.yml` runs `test` first, then
+builds and uploads to PyPI via `pypa/gh-action-pypi-publish`. If the pending
+publisher above hasn't been configured yet, this job fails with a clear PyPI
+auth error — configure it and re-run.

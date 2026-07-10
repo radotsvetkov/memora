@@ -89,6 +89,8 @@ Input: `{"region":"projects/drift"}`
 
 Output keys: `region`, `atlas_markdown`, `note_count`
 
+Like `memora_capture`, the region must stay inside the vault (`..` and absolute paths are rejected).
+
 ## `memora_get_world_map`
 
 Input: `{}`
@@ -120,7 +122,12 @@ Requires `MEMORA_ENABLE_NETWORK_LLM=1`.
 
 Input: `{"claim_id":"abcd1234"}`
 
-Output keys: `exists`, `span_intact`, `current_text`
+Output keys: `exists`, `span_intact`, `superseded`, `valid_until`, `current_text`
+
+`span_intact` is the hash-proven provenance check. `superseded` is separate:
+`true` when the claim's `valid_until` has passed, meaning the source span is
+still intact but the fact itself has been retracted or replaced — a claim can
+be `span_intact: true` and `superseded: true` at the same time.
 
 ## `memora_stale_claims`
 

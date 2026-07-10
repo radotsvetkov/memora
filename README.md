@@ -57,7 +57,7 @@ def test_assistant_is_grounded():
     assert_cited(my_rag_app(question), vault="./sources")   # raises on any unprovable citation
 ```
 
-See [`bindings/python`](bindings/python) for the wrapper.
+See [`bindings/python`](bindings/python) for the wrapper (and an install-from-source fallback if the PyPI package isn't live yet).
 
 ## The problem
 
@@ -219,7 +219,7 @@ Use it from Claude Desktop (`claude_desktop_config.json`):
 
 By default Memora never sends your notes to a cloud provider. Cloud LLM and cloud embedding calls are gated behind `MEMORA_ENABLE_NETWORK_LLM=1` on both the CLI and the MCP server, so a single config line cannot route content off your machine by accident. With the flag unset, cited queries still work offline through an extractive verified fallback (`degraded: true`).
 
-Other CLI commands: `memora watch` (keep the index current as you edit), `memora doctor` (diagnose a vault's config, index, and LLM connectivity), `memora challenge` (run one contradiction/staleness/frontier pass on demand), `memora consolidate` (rebuild region atlases and the world map), `memora claims` (inspect the claim graph directly), `memora privacy audit` (flag notes that look sensitive but aren't marked private/secret). Run `memora <command> --help` for details on any of them.
+Other CLI commands: `memora watch` (keep the index current as you edit), `memora doctor` (diagnose a vault's config, index, and LLM connectivity), `memora challenge` (run one contradiction/staleness/frontier pass on demand), `memora consolidate` (rebuild region atlases and the world map), `memora claims` (inspect the claim graph directly), `memora privacy audit` (flag notes that look sensitive but aren't marked private/secret). See [docs/src/cli-reference.md](docs/src/cli-reference.md) for what each one does, or run `memora <command> --help`.
 
 ## Status
 

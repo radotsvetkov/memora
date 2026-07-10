@@ -25,6 +25,7 @@
 
 # Reference
 
+- [CLI reference](./cli-reference.md)
 - [MCP tools](./mcp-tools.md)
 
 ---

@@ -78,8 +78,10 @@ and span hashes, not by prompt obedience.**
 - **[Quickstart](./quickstart.md)** - install and first verified citation in 10 minutes.
 - **[Ingesting documents](./ingesting.md)** - bring PDFs, web pages, and transcripts into the vault.
 - **[Architecture](./architecture.md)** - claim graph, retrieval, validation pipeline.
+- **[Citation protocol](./citation-protocol.md)** - the `[claim:ID]` marker format and validation rules.
 - **[Obsidian guide](./obsidian-guide.md)** - daily-driver setup with Claude Code.
 - **[Comparison](./comparison.md)** - honest breakdown vs Mem0, Zep, Letta, and Anthropic Citations.
+- **[CLI reference](./cli-reference.md)** - every command, including `doctor`, `challenge`, `consolidate`, and `claims`.
 - **[MCP tools](./mcp-tools.md)** - every tool, with examples.
 
 ## Status

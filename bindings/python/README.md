@@ -12,6 +12,10 @@ first.
 pip install memora-verify
 ```
 
+> **Not yet on PyPI?** Publishing is wired up (see `RELEASING.md`) but may not
+> have run yet. Until then, install straight from the repo:
+> `pip install "git+https://github.com/radotsvetkov/memora.git#subdirectory=bindings/python"`
+
 > **Prerequisite:** this wraps the `memora` binary. Install it once with
 > `brew install radotsvetkov/memora/memora` or `cargo install memora-cli`, put it
 > on `PATH`, or set `MEMORA_BIN` to its path. (Bundled-binary wheels are on the
