@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Security
+- `pdf-extract` bumped 0.7 → 0.12 (pulling `lopdf` 0.34 → 0.42), fixing a stack-overflow denial-of-service (RUSTSEC-2026-0187): a crafted PDF with ~10,000 levels of nested arrays in its Catalog could abort the process via unbounded recursion. Reachable through `memora ingest some.pdf` (the `pdf` feature).
+
+### Fixed
+- `cargo deny check` passes `--all-features` in CI (matching `cargo-deny-action`'s default), which a plain local `cargo deny check` doesn't reproduce — a config cleanup pass in the 0.2.0 audit removed two `deny.toml` ignore entries that looked stale under default features but are still needed under `--all-features` (`fxhash` via `web`, `number_prefix` via `local-embed`). Both are restored, plus a new one for `ttf-parser` (RUSTSEC-2026-0192, unmaintained, pulled in transitively by the `lopdf` bump above).
+
 ## [0.2.0] - 2026-07-10
 
 ### Added

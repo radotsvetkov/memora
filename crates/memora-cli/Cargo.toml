@@ -57,7 +57,7 @@ memora-llm.workspace = true
 memora-mcp.workspace = true
 rmcp = { version = "0.1", features = ["transport-io"] }
 tempfile.workspace = true
-pdf-extract = { version = "0.7", optional = true }
+pdf-extract = { version = "0.12", optional = true }
 reqwest = { workspace = true, optional = true }
 scraper = { version = "0.20", optional = true }
 
