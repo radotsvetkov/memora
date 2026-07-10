@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-10
+
 ### Security
 - `pdf-extract` bumped 0.7 → 0.12 (pulling `lopdf` 0.34 → 0.42), fixing a stack-overflow denial-of-service (RUSTSEC-2026-0187): a crafted PDF with ~10,000 levels of nested arrays in its Catalog could abort the process via unbounded recursion. Reachable through `memora ingest some.pdf` (the `pdf` feature).
 

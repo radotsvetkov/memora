@@ -39,11 +39,11 @@ Add `--entailment` for an optional, LLM-judged check that the source actually su
 A reusable GitHub Action ships in this repo:
 
 ```yaml
-- uses: radotsvetkov/memora/.github/actions/verify@v0.2.0
+- uses: radotsvetkov/memora/.github/actions/verify@v0.2.1
   with:
     vault: ./sources
     file: ./agent-output.txt
-    version: v0.2.0   # pin the memora-cli release too, or use "latest"
+    version: v0.2.1   # pin the memora-cli release too, or use "latest"
 ```
 
 Pin the action to a released tag for reproducible CI (`@main` tracks the latest commit and can change under you).
@@ -223,7 +223,7 @@ Other CLI commands: `memora watch` (keep the index current as you edit), `memora
 
 ## Status
 
-v0.2.0. Indexes a 100-note vault in about 5 to 10 minutes with Claude Haiku for roughly $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target, and larger scales are unmeasured. Privacy redaction runs through one type-enforced wire boundary that covers every cloud egress (LLM and embeddings). Citation fingerprints are full-width 256-bit blake3, and legacy 64-bit fingerprints from older indexes still verify until you re-index.
+v0.2.1. Indexes a 100-note vault in about 5 to 10 minutes with Claude Haiku for roughly $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target, and larger scales are unmeasured. Privacy redaction runs through one type-enforced wire boundary that covers every cloud egress (LLM and embeddings). Citation fingerprints are full-width 256-bit blake3, and legacy 64-bit fingerprints from older indexes still verify until you re-index.
 
 Issues, edge cases, and design discussions are welcome on the [issue tracker](https://github.com/radotsvetkov/memora/issues).
 

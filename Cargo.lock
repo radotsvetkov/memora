@@ -2241,7 +2241,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "memora-bench"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2257,7 +2257,7 @@ dependencies = [
 
 [[package]]
 name = "memora-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2287,7 +2287,7 @@ dependencies = [
 
 [[package]]
 name = "memora-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2324,7 +2324,7 @@ dependencies = [
 
 [[package]]
 name = "memora-llm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2341,7 +2341,7 @@ dependencies = [
 
 [[package]]
 name = "memora-mcp"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
