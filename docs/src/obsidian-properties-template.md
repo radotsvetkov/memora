@@ -32,4 +32,4 @@ refs: []
 
 - Memora keeps timestamps in second precision (`...T12:34:56Z`).
 - If `frontmatter.refs_mode = "sync_from_wikilinks"`, `refs` is rewritten from body wikilinks.
-- Invalid `source` / `privacy` values are normalized to `personal` / `private`.
+- Invalid `source` values are normalized to `personal`. Invalid `privacy` values fail closed to `secret` (not `private`) — an unrecognized value is treated as maximally sensitive rather than silently downgraded.

@@ -14,7 +14,7 @@ quality-of-life normalizations while indexing:
 - `region` follows the note's folder path relative to the vault root.
 - `updated` follows the file mtime (second precision).
 - `refs` can optionally mirror detected wikilinks (configurable).
-- Invalid `source` / `privacy` enum values are normalized to defaults.
+- An invalid `source` value is normalized to `personal`. An invalid `privacy` value fails closed to `secret` (the most restrictive level), not silently downgraded.
 
 ```yaml
 ---
@@ -66,7 +66,7 @@ Claims extracted from secret spans are marked `secret` even when note privacy is
 - `<region>/_index.md`
 - `.memora/config.toml`
 - `.memora/memora.db`
-- `.memora/vectors/*`
+- `.memora/vectors.bin`, `.memora/vectors.hnsw.data`, `.memora/vectors.hnsw.graph`
 - `.memora/last_challenger.json`
 - `.memora/watch.lock` (present while `memora watch` is running)
 

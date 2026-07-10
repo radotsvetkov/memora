@@ -42,8 +42,10 @@ Use a structure that keeps note intent clear and lets Memora infer context.
   world_map.md
   .memora/
     config.toml
-    state.db
-    logs/
+    memora.db
+    vectors.bin
+    vectors.hnsw.data
+    vectors.hnsw.graph
 ```
 
 ### Why these folders
