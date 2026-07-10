@@ -181,17 +181,14 @@ const MAX_FETCH_REDIRECTS: u8 = 5;
 #[cfg(feature = "web")]
 fn is_blocked_ip(ip: std::net::IpAddr) -> bool {
     match ip {
-        std::net::IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_multicast()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                // 100.64.0.0/10 (carrier-grade NAT; some cloud metadata proxies sit here)
-                || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
-        }
+        std::net::IpAddr::V4(v4) => is_blocked_ipv4(v4),
         std::net::IpAddr::V6(v6) => {
+            // IPv4-mapped (::ffff:a.b.c.d) and NAT64 (64:ff9b::/96) addresses
+            // embed a real IPv4 target; unwrap and re-check it, so
+            // `::ffff:169.254.169.254` can't slip past the v6 checks below.
+            if let Some(v4) = v6.to_ipv4_mapped().or_else(|| nat64_embedded_ipv4(&v6)) {
+                return is_blocked_ipv4(v4);
+            }
             v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
@@ -204,7 +201,36 @@ fn is_blocked_ip(ip: std::net::IpAddr) -> bool {
 }
 
 #[cfg(feature = "web")]
-async fn validate_fetch_target(url: &reqwest::Url) -> Result<()> {
+fn is_blocked_ipv4(v4: std::net::Ipv4Addr) -> bool {
+    v4.is_loopback()
+        || v4.is_private()
+        || v4.is_link_local()
+        || v4.is_multicast()
+        || v4.is_unspecified()
+        || v4.is_broadcast()
+        // 100.64.0.0/10 (carrier-grade NAT; some cloud metadata proxies sit here)
+        || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
+}
+
+#[cfg(feature = "web")]
+fn nat64_embedded_ipv4(v6: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+    let segments = v6.segments();
+    if segments[0..6] == [0x0064, 0xff9b, 0, 0, 0, 0] {
+        let o = v6.octets();
+        return Some(std::net::Ipv4Addr::new(o[12], o[13], o[14], o[15]));
+    }
+    None
+}
+
+/// Validates the fetch target and, for a hostname (not an IP literal), also
+/// resolves it and returns the one address that was actually checked. The
+/// caller must pin the connection to that exact address (`ClientBuilder::resolve`)
+/// rather than letting the HTTP client re-resolve the hostname itself —
+/// otherwise a low-TTL DNS record (fully within an attacker's control for
+/// their own domain) can return a public address here and a private one at
+/// connect time, a classic DNS-rebinding TOCTOU gap.
+#[cfg(feature = "web")]
+async fn validate_fetch_target(url: &reqwest::Url) -> Result<Option<std::net::SocketAddr>> {
     let host = url
         .host_str()
         .ok_or_else(|| anyhow!("URL {url} has no host"))?
@@ -215,17 +241,20 @@ async fn validate_fetch_target(url: &reqwest::Url) -> Result<()> {
         if is_blocked_ip(ip) {
             bail!("refusing to fetch {url}: {ip} is not a public address");
         }
-        return Ok(());
+        return Ok(None);
     }
 
     let addrs = tokio::task::spawn_blocking(move || {
         use std::net::ToSocketAddrs;
-        (host.as_str(), port).to_socket_addrs()
+        (host.as_str(), port)
+            .to_socket_addrs()
+            .map(|it| it.collect::<Vec<_>>())
     })
     .await
     .context("resolve fetch host")?
     .with_context(|| format!("resolve host for {url}"))?;
 
+    let mut pinned = None;
     for addr in addrs {
         if is_blocked_ip(addr.ip()) {
             bail!(
@@ -233,21 +262,28 @@ async fn validate_fetch_target(url: &reqwest::Url) -> Result<()> {
                 addr.ip()
             );
         }
+        pinned.get_or_insert(addr);
     }
-    Ok(())
+    pinned
+        .ok_or_else(|| anyhow!("could not resolve host for {url}"))
+        .map(Some)
 }
 
 #[cfg(feature = "web")]
 async fn fetch_and_extract(url: &str) -> Result<(String, Option<String>)> {
-    let client = reqwest::Client::builder()
-        .user_agent(concat!("memora-ingest/", env!("CARGO_PKG_VERSION")))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .context("build HTTP client")?;
-
     let mut current = reqwest::Url::parse(url).with_context(|| format!("parse URL {url}"))?;
     for _ in 0..MAX_FETCH_REDIRECTS {
-        validate_fetch_target(&current).await?;
+        let pinned_addr = validate_fetch_target(&current).await?;
+        let mut builder = reqwest::Client::builder()
+            .user_agent(concat!("memora-ingest/", env!("CARGO_PKG_VERSION")))
+            .redirect(reqwest::redirect::Policy::none());
+        if let Some(addr) = pinned_addr {
+            let host = current
+                .host_str()
+                .ok_or_else(|| anyhow!("URL {current} has no host"))?;
+            builder = builder.resolve(host, addr);
+        }
+        let client = builder.build().context("build HTTP client")?;
         let response = client
             .get(current.clone())
             .send()
@@ -490,6 +526,28 @@ mod tests {
             .await
             .expect_err("localhost must be rejected");
         assert!(err.to_string().contains("non-public address"));
+    }
+
+    #[cfg(feature = "web")]
+    #[test]
+    fn is_blocked_ip_unwraps_ipv4_mapped_and_nat64_addresses() {
+        let blocked = [
+            "::ffff:169.254.169.254", // IPv4-mapped metadata endpoint
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "64:ff9b::169.254.169.254", // NAT64-embedded metadata endpoint
+        ];
+        for ip in blocked {
+            assert!(
+                is_blocked_ip(ip.parse().expect("valid ip literal")),
+                "{ip} should be blocked (embeds a non-public v4 address)"
+            );
+        }
+
+        assert!(
+            !is_blocked_ip("::ffff:93.184.216.34".parse().unwrap()),
+            "IPv4-mapped public address should not be blocked"
+        );
     }
 
     #[test]

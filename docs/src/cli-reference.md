@@ -1,8 +1,11 @@
 # CLI reference
 
-Every `memora` subcommand takes `--vault <path>` (default `vault`). Run
-`memora <command> --help` for the authoritative, up-to-date flag list — this
-page covers what each command is *for* and when to reach for it.
+Every `memora` subcommand that operates on a vault takes `--vault <path>`
+(default `vault`) — the two exceptions are `memora demo` (builds its own
+throwaway vault) and `memora serve`/`memora-mcp` (the vault comes from
+`MEMORA_VAULT`, see [MCP tools](./mcp-tools.md)). Run `memora <command>
+--help` for the authoritative, up-to-date flag list — this page covers what
+each command is *for* and when to reach for it.
 
 ## Everyday commands
 

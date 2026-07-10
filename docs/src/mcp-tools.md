@@ -63,12 +63,19 @@ Output:
 
 ```json
 {
+  "raw_text": "drift switched from JSON to MessagePack [claim:drf75a1c9e10b2aa]",
   "clean_text": "drift switched from JSON to MessagePack [claim:drf75a1c9e10b2aa]",
+  "checks": [{"claim_id": "drf75a1c9e10b2aa", "status": "verified", "source_text": "...", "quote": "..."}],
   "verified_count": 1,
-  "degraded": false,
-  "checks": [{"claim_id": "drf75a1c9e10b2aa", "status": "verified"}]
+  "unverified_count": 0,
+  "mismatch_count": 0,
+  "superseded_count": 0,
+  "redacted_count": 0,
+  "degraded": false
 }
 ```
+
+`status` is one of the five [citation protocol](./citation-protocol.md) values. `redacted_count` counts citations whose source was withheld because it's marked `secret` and the destination is a cloud provider.
 
 When network LLM is disabled, responses are built extractively from indexed
 claims with `degraded: true`. Secret claims sent to cloud providers are redacted

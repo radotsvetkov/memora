@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- The MCP server (`memora-mcp`/`memora serve`) required `MEMORA_INDEX_DB` and `MEMORA_VECTOR_INDEX` in addition to `MEMORA_VAULT`, even though every documented config (README, quickstart, mcp-tools.md) sets only `MEMORA_VAULT`. When either was missing, the server silently fell back to a hardcoded relative `./vault` — ignoring the real vault entirely, with no error surfaced. `MEMORA_INDEX_DB`/`MEMORA_VECTOR_INDEX` are now genuinely optional, deriving `{vault}/.memora/memora.db` and `{vault}/.memora/vectors` as documented. The server also now checks the vault exists and logs a clear error (instead of silence) if it has to fall back.
+
+### Security
+- The `memora ingest <url>` SSRF guard (added in 0.2.0) didn't unwrap IPv4-mapped (`::ffff:169.254.169.254`) or NAT64-embedded IPv6 addresses before checking them, so a hostname resolving to one of those forms could reach a blocked address anyway. It also re-resolved DNS at connect time rather than pinning the address it had just validated, a TOCTOU gap a malicious domain (low TTL, rebinding) could exploit. Both fixed: blocked-IP checks now unwrap embedded IPv4 addresses, and the HTTP client pins the connection to the exact address that was validated.
+
 ## [0.2.1] - 2026-07-10
 
 ### Security

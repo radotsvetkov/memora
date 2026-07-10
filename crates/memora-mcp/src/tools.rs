@@ -33,7 +33,14 @@ pub struct MemoraMcpServer {
 
 impl MemoraMcpServer {
     pub fn new() -> Self {
-        let runtime = MemoraRuntime::from_env().unwrap_or_else(|_| MemoraRuntime::default_paths());
+        let runtime = MemoraRuntime::from_env().unwrap_or_else(|err| {
+            tracing::error!(
+                error = %err,
+                "MEMORA_VAULT is unset, invalid, or missing — falling back to './vault' \
+                 relative to the current directory, which is almost certainly not what you want"
+            );
+            MemoraRuntime::default_paths()
+        });
         Self {
             runtime: Arc::new(runtime),
         }
@@ -200,17 +207,33 @@ impl MemoraRuntime {
         }
     }
 
+    /// Only `MEMORA_VAULT` is required. `MEMORA_INDEX_DB`/`MEMORA_VECTOR_INDEX`
+    /// are optional overrides, defaulting to `{vault}/.memora/memora.db` and
+    /// `{vault}/.memora/vectors` — the paths every documented MCP config
+    /// (README, quickstart, mcp-tools.md) sets only `MEMORA_VAULT` and relies
+    /// on. Previously these were also required, so any config following the
+    /// docs silently fell back to `default_paths()` below (a bogus relative
+    /// `./vault`) instead of the real vault, with no error surfaced.
     pub fn from_env() -> Result<Self> {
         let vault_root =
             PathBuf::from(std::env::var("MEMORA_VAULT").context("MEMORA_VAULT not set")?);
+        if !vault_root.is_dir() {
+            return Err(anyhow!(
+                "MEMORA_VAULT does not exist: {}",
+                vault_root.display()
+            ));
+        }
+        let memora_dir = vault_root.join(".memora");
+        let index_db = std::env::var("MEMORA_INDEX_DB")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| memora_dir.join("memora.db"));
+        let vector_index = std::env::var("MEMORA_VECTOR_INDEX")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| memora_dir.join("vectors"));
         Ok(Self {
             vault_root: vault_root.clone(),
-            index_db: PathBuf::from(
-                std::env::var("MEMORA_INDEX_DB").context("MEMORA_INDEX_DB not set")?,
-            ),
-            vector_index: PathBuf::from(
-                std::env::var("MEMORA_VECTOR_INDEX").context("MEMORA_VECTOR_INDEX not set")?,
-            ),
+            index_db,
+            vector_index,
             config: VaultConfig::load(&vault_root)?,
         })
     }
@@ -702,5 +725,89 @@ fn parse_privacy(raw: Option<&str>) -> Result<Privacy> {
         "private" => Ok(Privacy::Private),
         "secret" => Ok(Privacy::Secret),
         other => Err(anyhow!("invalid privacy value: {other}")),
+    }
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::MemoraRuntime;
+    use std::sync::Mutex;
+    use tempfile::tempdir;
+
+    // These tests mutate process-wide env vars, so they must not run
+    // concurrently with each other (they may run concurrently with tests in
+    // other files/binaries, which is fine — env vars are per-process). A
+    // poisoned lock (from a prior failing test) must not cascade into
+    // spurious failures in the rest of this module.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn from_env_derives_index_and_vector_paths_from_vault_when_unset() {
+        let _guard = lock();
+        let vault = tempdir().expect("tempdir");
+        std::env::set_var("MEMORA_VAULT", vault.path());
+        std::env::remove_var("MEMORA_INDEX_DB");
+        std::env::remove_var("MEMORA_VECTOR_INDEX");
+
+        let runtime = MemoraRuntime::from_env().expect("MEMORA_VAULT alone must be sufficient");
+
+        assert_eq!(runtime.vault_root, vault.path());
+        assert_eq!(runtime.index_db, vault.path().join(".memora/memora.db"));
+        assert_eq!(runtime.vector_index, vault.path().join(".memora/vectors"));
+
+        std::env::remove_var("MEMORA_VAULT");
+    }
+
+    #[test]
+    fn from_env_honors_explicit_overrides() {
+        let _guard = lock();
+        let vault = tempdir().expect("tempdir");
+        std::env::set_var("MEMORA_VAULT", vault.path());
+        std::env::set_var("MEMORA_INDEX_DB", "/tmp/custom.db");
+        std::env::set_var("MEMORA_VECTOR_INDEX", "/tmp/custom-vectors");
+
+        let runtime = MemoraRuntime::from_env().expect("all vars set");
+
+        assert_eq!(runtime.index_db, std::path::Path::new("/tmp/custom.db"));
+        assert_eq!(
+            runtime.vector_index,
+            std::path::Path::new("/tmp/custom-vectors")
+        );
+
+        std::env::remove_var("MEMORA_VAULT");
+        std::env::remove_var("MEMORA_INDEX_DB");
+        std::env::remove_var("MEMORA_VECTOR_INDEX");
+    }
+
+    #[test]
+    fn from_env_fails_without_memora_vault() {
+        let _guard = lock();
+        std::env::remove_var("MEMORA_VAULT");
+        std::env::remove_var("MEMORA_INDEX_DB");
+        std::env::remove_var("MEMORA_VECTOR_INDEX");
+
+        assert!(MemoraRuntime::from_env().is_err());
+    }
+
+    #[test]
+    fn from_env_fails_when_vault_does_not_exist() {
+        let _guard = lock();
+        std::env::set_var(
+            "MEMORA_VAULT",
+            "/tmp/definitely-not-a-real-memora-vault-dir",
+        );
+        std::env::remove_var("MEMORA_INDEX_DB");
+        std::env::remove_var("MEMORA_VECTOR_INDEX");
+
+        let err = MemoraRuntime::from_env().expect_err("nonexistent vault must be rejected");
+        assert!(err.to_string().contains("does not exist"));
+
+        std::env::remove_var("MEMORA_VAULT");
     }
 }

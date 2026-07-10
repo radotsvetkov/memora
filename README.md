@@ -34,7 +34,7 @@ memora verify --vault ./sources --json answer.txt | jq .problems
 echo "drift uses MessagePack [claim:0123456789abcdef]." | memora verify --vault ./sources
 ```
 
-Add `--entailment` for an optional, LLM-judged check that the source actually supports each verified citation (and `--fail-unsupported` to fail the build on a "no" verdict). It is best-effort, kept separate from the hash-proven provenance.
+Add `--entailment` for an optional, LLM-judged check that the source actually supports each verified citation (and `--fail-unsupported` to fail the build on a "no" verdict). It is best-effort, kept separate from the hash-proven provenance. Add `--allow-superseded` if a retracted-but-provenance-intact citation shouldn't fail the build (superseded citations count as a problem by default).
 
 A reusable GitHub Action ships in this repo:
 
@@ -43,7 +43,8 @@ A reusable GitHub Action ships in this repo:
   with:
     vault: ./sources
     file: ./agent-output.txt
-    version: v0.2.1   # pin the memora-cli release too, or use "latest"
+    version: v0.2.1          # pin the memora-cli release too, or use "latest"
+    allow-superseded: "true" # optional, default "false"
 ```
 
 Pin the action to a released tag for reproducible CI (`@main` tracks the latest commit and can change under you).
