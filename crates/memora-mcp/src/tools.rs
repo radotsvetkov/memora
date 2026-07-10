@@ -329,8 +329,8 @@ impl MemoraRuntime {
     }
 
     pub async fn get_atlas(&self, input: RegionInput) -> Result<Value> {
-        let atlas_markdown =
-            fs::read_to_string(self.vault_root.join(&input.region).join("_atlas.md"))?;
+        let region_dir = validate_region(&self.vault_root, &input.region)?;
+        let atlas_markdown = fs::read_to_string(region_dir.join("_atlas.md"))?;
         let conn = rusqlite::Connection::open(&self.index_db)?;
         let note_count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM notes WHERE region = ?",

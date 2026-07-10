@@ -10,6 +10,12 @@ Hallucinated citations are caught structurally, not by trust.
 
 → **[See the architecture in motion](https://radotsvetkov.github.io/memora)**
 
+Try it with no vault and no API key: `memora demo`. Once you have a vault,
+`memora verify` runs the same check in CI or an eval suite and exits non-zero
+on an unprovable citation — see the
+[README](https://github.com/radotsvetkov/memora#verify-in-ci) for the GitHub
+Action and Python wrapper.
+
 ---
 
 ## The problem
@@ -78,7 +84,7 @@ and span hashes, not by prompt obedience.**
 
 ## Status
 
-v0.1.29. Indexes 100-note vaults in 5 to 10 minutes with Claude Haiku for about $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target. Larger scales are unmeasured. The active challenger surfaces decisions, contradictions, stale dependencies, and open questions in every atlas. MCP and watch now share the same embedder config, privacy redaction, and claim extraction pipeline as the CLI.
+v0.2.0. Indexes 100-note vaults in 5 to 10 minutes with Claude Haiku for about $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target. Larger scales are unmeasured. The active challenger surfaces decisions, contradictions, stale dependencies, and open questions in every atlas. MCP and watch now share the same embedder config, privacy redaction, and claim extraction pipeline as the CLI.
 
 Issues, edge cases, and design discussions welcome at
 [github.com/radotsvetkov/memora/issues](https://github.com/radotsvetkov/memora/issues).

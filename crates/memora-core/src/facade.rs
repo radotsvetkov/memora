@@ -52,6 +52,13 @@ impl Memora {
     /// unless `MEMORA_ENABLE_NETWORK_LLM=1` is set, mirroring the CLI and MCP.
     pub fn open(vault_root: impl AsRef<Path>) -> Result<Self> {
         let vault_root = vault_root.as_ref().to_path_buf();
+        if !vault_root.is_dir() {
+            return Err(anyhow!(
+                "vault not found at {} (run `memora init --vault {}` first)",
+                vault_root.display(),
+                vault_root.display()
+            ));
+        }
         let config = VaultConfig::load(&vault_root)
             .with_context(|| format!("load config for vault {}", vault_root.display()))?;
         let memora_dir = vault_root.join(".memora");

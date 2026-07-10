@@ -138,7 +138,7 @@ fn is_watchable_markdown(path: &Path) -> bool {
 fn is_generated_atlas_or_index(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, "_atlas.md" | "_index.md"))
+        .is_some_and(|name| matches!(name, "_atlas.md" | "_index.md" | "world_map.md"))
 }
 
 #[cfg(test)]
@@ -169,7 +169,6 @@ mod tests {
             .collect();
 
         let expected = BTreeSet::from([
-            PathBuf::from("world_map.md"),
             PathBuf::from("work/team-sync.md"),
             PathBuf::from("personal/example.md"),
         ]);
@@ -194,22 +193,27 @@ mod tests {
         let root = tempdir().expect("create temp dir");
         let atlas = root.path().join("_atlas.md");
         let index = root.path().join("_index.md");
+        let world_map = root.path().join("world_map.md");
         let normal = root.path().join("normal.md");
 
         fs::write(&atlas, "# atlas").expect("write atlas");
         fs::write(&index, "# index").expect("write index");
+        fs::write(&world_map, "# World Map").expect("write world map");
         fs::write(&normal, "# normal").expect("write normal");
 
         let scanned: BTreeSet<_> = scan(root.path()).collect();
         assert!(scanned.contains(&normal));
         assert!(!scanned.contains(&atlas));
         assert!(!scanned.contains(&index));
+        assert!(!scanned.contains(&world_map));
 
         let watchable_normal = Path::new("/vault/normal.md");
         let watchable_atlas = Path::new("/vault/_atlas.md");
         let watchable_index = Path::new("/vault/_index.md");
+        let watchable_world_map = Path::new("/vault/world_map.md");
         assert!(is_watchable_markdown(watchable_normal));
         assert!(!is_watchable_markdown(watchable_atlas));
         assert!(!is_watchable_markdown(watchable_index));
+        assert!(!is_watchable_markdown(watchable_world_map));
     }
 }

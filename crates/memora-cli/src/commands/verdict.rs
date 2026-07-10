@@ -15,9 +15,12 @@ pub struct RenderOpts {
     pub show_naive_contrast: bool,
 }
 
-/// Whether ANSI colour should be emitted (honours the NO_COLOR convention).
+/// Whether ANSI colour should be emitted: honours the NO_COLOR convention and
+/// never writes escape codes when stdout isn't a terminal (e.g. redirected to
+/// a file or piped in CI), where they'd just corrupt the captured output.
 pub fn color_enabled() -> bool {
-    std::env::var_os("NO_COLOR").is_none()
+    use std::io::IsTerminal;
+    std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
 }
 
 /// Plain-English reason a citation was rejected, flagged, or accepted.

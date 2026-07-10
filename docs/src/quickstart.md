@@ -9,6 +9,24 @@ validated against your markdown.
 This walkthrough takes a determined user from install to first verified cited
 answer in about 10 minutes.
 
+## 0) See it work first, zero config
+
+Before touching a vault, see the actual guarantee — no API key, no network:
+
+```bash
+memora demo          # terminal verdict over a fixture with every failure mode
+memora demo --open   # same, plus an HTML Proof Report
+```
+
+Once you have your own vault (steps 1-5 below), the same check runs in CI or an
+eval suite as `memora verify`:
+
+```bash
+memora verify --vault ~/brain answer.txt   # exits non-zero if any citation is unprovable
+```
+
+See the [README](https://github.com/radotsvetkov/memora#verify-in-ci) for the GitHub Action and Python wrapper.
+
 ## 1) Install Memora
 
 ```bash

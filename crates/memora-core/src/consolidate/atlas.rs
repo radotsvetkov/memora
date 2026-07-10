@@ -60,6 +60,8 @@ struct SubregionProposal {
 
 impl<'a> AtlasWriter<'a> {
     pub async fn rebuild_region(&self, region: &str) -> Result<()> {
+        crate::vault_path::validate_region(self.vault, region)
+            .with_context(|| format!("invalid region {region:?}"))?;
         let notes = self.region_notes(region)?;
         let note_ids = notes
             .iter()

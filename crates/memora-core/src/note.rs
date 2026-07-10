@@ -307,7 +307,10 @@ fn normalize_invalid_source_and_privacy(path: &Path, source: &str) -> Result<boo
     changed |= normalize_enum_frontmatter_field(map, "source", "personal", |value| {
         NoteSource::from_str(value).is_ok()
     });
-    changed |= normalize_enum_frontmatter_field(map, "privacy", "private", |value| {
+    // Fail closed: an unrecognized `privacy:` value (typo, e.g. "top-secret") must
+    // never be coerced to the *least* restrictive recoverable level. Defaulting to
+    // `secret` means a garbled marker only ever over-protects, never leaks.
+    changed |= normalize_enum_frontmatter_field(map, "privacy", "secret", |value| {
         Privacy::from_str(value).is_ok()
     });
 
@@ -338,6 +341,12 @@ where
     match raw {
         Value::String(value) if is_valid(value.as_str()) => {}
         _ => {
+            tracing::warn!(
+                field = key,
+                fallback,
+                value = ?raw,
+                "unrecognized frontmatter value normalized to fallback"
+            );
             changed = true;
             map.insert(lookup, Value::String(fallback.to_string()));
         }
@@ -1198,11 +1207,13 @@ Body
         let (parsed, _) =
             parse_or_infer(&path, &vault_root).expect("parse_or_infer should recover");
         assert_eq!(parsed.fm.source, NoteSource::Personal);
-        assert_eq!(parsed.fm.privacy, Privacy::Private);
+        // An unrecognized privacy value must fail closed to the most restrictive
+        // level, never silently downgrade to a less protected one.
+        assert_eq!(parsed.fm.privacy, Privacy::Secret);
 
         let rewritten = fs::read_to_string(&path).expect("read rewritten note");
         assert!(rewritten.contains("source: personal"));
-        assert!(rewritten.contains("privacy: private"));
+        assert!(rewritten.contains("privacy: secret"));
     }
 
     #[test]

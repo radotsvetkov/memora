@@ -16,7 +16,7 @@ pub enum PrivacyCommand {
 #[derive(Debug, Args)]
 pub struct PrivacyAuditArgs {
     #[arg(long, default_value = "vault")]
-    pub vault_root: PathBuf,
+    pub vault: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +32,7 @@ pub fn run(cmd: PrivacyCommand) -> Result<()> {
 }
 
 fn run_audit(args: PrivacyAuditArgs) -> Result<()> {
-    let suspects = audit_notes(&args.vault_root)?;
+    let suspects = audit_notes(&args.vault)?;
     if suspects.is_empty() {
         println!("No suspect notes found.");
         return Ok(());

@@ -19,7 +19,6 @@ enum MarkerKind {
 struct OpenMarker {
     content_start: usize,
     level: Privacy,
-    nested: bool,
 }
 
 pub fn parse_privacy_spans(body: &str) -> Vec<(usize, usize, Privacy)> {
@@ -48,25 +47,25 @@ pub fn parse_privacy_spans(body: &str) -> Vec<(usize, usize, Privacy)> {
         });
     }
 
+    // Nested markers (e.g. a `secret` block inside a `private` block) are
+    // legitimate, not an error: both spans are kept, and `privacy_for_span`'s
+    // max-over-overlaps composition makes the innermost (most restrictive)
+    // level win wherever spans overlap. Dropping either span here would
+    // silently strip protection from real content, so this must fail closed.
     let mut stack: Vec<OpenMarker> = Vec::new();
     let mut spans = Vec::new();
     for token in tokens {
         match token.kind {
             MarkerKind::Open(level) => {
-                let has_parent = !stack.is_empty();
                 if !stack.is_empty() {
                     tracing::warn!(
                         position = token.start,
-                        "nested privacy marker detected; skipping nested block"
+                        "nested privacy marker detected; both levels will be enforced"
                     );
-                    for marker in &mut stack {
-                        marker.nested = true;
-                    }
                 }
                 stack.push(OpenMarker {
                     content_start: token.end,
                     level,
-                    nested: has_parent,
                 });
             }
             MarkerKind::Close => {
@@ -77,9 +76,6 @@ pub fn parse_privacy_spans(body: &str) -> Vec<(usize, usize, Privacy)> {
                     );
                     continue;
                 };
-                if open.nested {
-                    continue;
-                }
                 if token.start >= open.content_start {
                     spans.push((open.content_start, token.start, open.level));
                 }
@@ -125,10 +121,31 @@ mod tests {
     }
 
     #[test]
-    fn parse_privacy_spans_skips_nested_markers() {
+    fn parse_privacy_spans_keeps_both_levels_for_nested_markers() {
         let body = "<!--privacy:private-->outer <!--privacy:secret-->inner<!--/privacy--> text<!--/privacy-->";
         let spans = parse_privacy_spans(body);
-        assert!(spans.is_empty());
+        assert_eq!(spans.len(), 2);
+
+        let inner = spans
+            .iter()
+            .find(|(_, _, level)| *level == Privacy::Secret)
+            .expect("inner secret span present");
+        assert_eq!(&body[inner.0..inner.1], "inner");
+
+        let outer = spans
+            .iter()
+            .find(|(_, _, level)| *level == Privacy::Private)
+            .expect("outer private span present");
+        assert_eq!(
+            &body[outer.0..outer.1],
+            "outer <!--privacy:secret-->inner<!--/privacy--> text"
+        );
+
+        // Content inside the inner marker must resolve to the more restrictive
+        // Secret level, even though it also falls inside the outer Private span.
+        let inner_start = body.find("inner").unwrap();
+        let level = privacy_for_span(inner_start, inner_start + 5, &spans, Privacy::Public);
+        assert_eq!(level, Privacy::Secret);
     }
 
     #[test]

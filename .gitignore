@@ -28,3 +28,12 @@ _site/
 
 # Local preview / launch config
 .claude/
+
+# Python (bindings/python)
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.venv/

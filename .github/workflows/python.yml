@@ -10,6 +10,9 @@ on:
       - "bindings/python/**"
       - ".github/workflows/python.yml"
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

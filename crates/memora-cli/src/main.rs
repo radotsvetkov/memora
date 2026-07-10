@@ -7,7 +7,11 @@ mod config;
 mod runtime;
 
 #[derive(Debug, Parser)]
-#[command(name = "memora", about = "Memora CLI")]
+#[command(
+    name = "memora",
+    about = "Verify AI citations against your sources, structurally.",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -23,27 +27,39 @@ enum Commands {
     Ingest(commands::ingest::IngestArgs),
     /// Generate a self-contained HTML report of the vault (graph, contradictions, world map).
     Report(commands::report::ReportArgs),
+    /// Create a new vault (frontmatter config, sample note, empty world map).
     Init(commands::init::InitArgs),
+    /// Parse the vault, extract claims, and build the SQLite + vector index.
     Index(commands::index::IndexArgs),
+    /// Watch the vault for changes and keep the index current incrementally.
     Watch(commands::watch::WatchArgs),
+    /// Run the MCP server over stdio (same as the `memora-mcp` binary).
     Serve(commands::serve::ServeArgs),
+    /// Inspect and manage the claim graph directly.
     Claims {
         #[command(subcommand)]
         command: commands::claims::ClaimsCommand,
     },
+    /// Run one challenger pass: surface contradictions, stale claims, and open questions.
     Challenge(commands::challenge::ChallengeArgs),
+    /// Rebuild region atlases and the world map from the current claim graph.
     Consolidate(commands::consolidate::ConsolidateArgs),
+    /// Diagnose a vault: config, index health, embedder, and LLM connectivity.
     Doctor(commands::doctor::DoctorArgs),
+    /// Privacy-related utilities.
     Privacy {
         #[command(subcommand)]
         command: commands::privacy::PrivacyCommand,
     },
+    /// Ask a question; get a verified, cited answer from the configured LLM.
     Query(commands::query::QueryArgs),
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("warn,memora_core=info,memora_cli=info,memora_llm=info")
+    });
     fmt()
         .with_env_filter(filter)
         .with_target(false)

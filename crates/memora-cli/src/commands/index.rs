@@ -58,7 +58,7 @@ pub async fn run(args: IndexArgs) -> Result<()> {
     );
     if stats.errors > 0 {
         eprintln!(
-            "\n{} notes had indexing failures. Re-run with RUST_LOG=warn for details.",
+            "\n{} notes had indexing failures (see warnings above for details).",
             stats.errors
         );
     }

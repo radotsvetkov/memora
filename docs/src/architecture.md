@@ -28,7 +28,6 @@ make unsupported claims difficult to surface and easy to detect.
 +--------------------------------------------------------------------------+
 | Layer 3: Retrieval + Validation                                          |
 |  Hybrid retrieval (BM25 + vector + RRF)                                  |
-|  Spreading activation over links/edges                                   |
 |  Privacy filter + typed prompt builder                                   |
 |  Citation validator (span re-read + fingerprint recompute + retry)       |
 +--------------------------------------------------------------------------+

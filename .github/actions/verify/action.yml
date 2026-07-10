@@ -15,6 +15,10 @@ inputs:
     description: "Do not fail the build on superseded citations (provenance intact, claim retracted)."
     required: false
     default: "false"
+  version:
+    description: "memora-cli release tag to install (e.g. v0.1.29), or 'latest'."
+    required: false
+    default: "latest"
 
 runs:
   using: composite
@@ -23,7 +27,7 @@ runs:
       shell: bash
       run: |
         curl --proto '=https' --tlsv1.2 -LsSf \
-          https://github.com/radotsvetkov/memora/releases/latest/download/memora-cli-installer.sh | sh
+          "https://github.com/radotsvetkov/memora/releases/${{ inputs.version == 'latest' && 'latest/download' || format('download/{0}', inputs.version) }}/memora-cli-installer.sh" | sh
 
     - name: Verify citations
       shell: bash

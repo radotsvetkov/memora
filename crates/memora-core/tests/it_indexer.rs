@@ -521,7 +521,8 @@ Body.
 
     let reparsed = note::parse(&note_path)?;
     assert_eq!(reparsed.fm.source.to_string(), "personal");
-    assert_eq!(reparsed.fm.privacy.to_string(), "private");
+    // An unrecognized privacy value fails closed to the most restrictive level.
+    assert_eq!(reparsed.fm.privacy.to_string(), "secret");
     assert!(index.get_note("invalid-meta")?.is_some());
 
     Ok(())

@@ -9,7 +9,7 @@ Memora is the independent verification layer for AI citations. It re-reads the e
 [![License](https://img.shields.io/badge/license-Apache--2.0-3b82f6)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-f59e0b)](rust-toolchain.toml)
 [![crates.io](https://img.shields.io/crates/v/memora-core)](https://crates.io/crates/memora-core)
-[![Local-first](https://img.shields.io/badge/local--first-yes-10b981)](#)
+[![Local-first](https://img.shields.io/badge/local--first-yes-10b981)](#quickstart)
 
 → **[See it in motion](https://radotsvetkov.github.io/memora)**
 
@@ -39,11 +39,14 @@ Add `--entailment` for an optional, LLM-judged check that the source actually su
 A reusable GitHub Action ships in this repo:
 
 ```yaml
-- uses: radotsvetkov/memora/.github/actions/verify@main
+- uses: radotsvetkov/memora/.github/actions/verify@v0.2.0
   with:
     vault: ./sources
     file: ./agent-output.txt
+    version: v0.2.0   # pin the memora-cli release too, or use "latest"
 ```
+
+Pin the action to a released tag for reproducible CI (`@main` tracks the latest commit and can change under you).
 
 Building in Python? `pip install memora-verify` and call it from your eval suite:
 
@@ -216,9 +219,11 @@ Use it from Claude Desktop (`claude_desktop_config.json`):
 
 By default Memora never sends your notes to a cloud provider. Cloud LLM and cloud embedding calls are gated behind `MEMORA_ENABLE_NETWORK_LLM=1` on both the CLI and the MCP server, so a single config line cannot route content off your machine by accident. With the flag unset, cited queries still work offline through an extractive verified fallback (`degraded: true`).
 
+Other CLI commands: `memora watch` (keep the index current as you edit), `memora doctor` (diagnose a vault's config, index, and LLM connectivity), `memora challenge` (run one contradiction/staleness/frontier pass on demand), `memora consolidate` (rebuild region atlases and the world map), `memora claims` (inspect the claim graph directly), `memora privacy audit` (flag notes that look sensitive but aren't marked private/secret). Run `memora <command> --help` for details on any of them.
+
 ## Status
 
-v0.1.29. Indexes a 100-note vault in about 5 to 10 minutes with Claude Haiku for roughly $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target, and larger scales are unmeasured. Privacy redaction runs through one type-enforced wire boundary that covers every cloud egress (LLM and embeddings). Citation fingerprints are full-width 256-bit blake3, and legacy 64-bit fingerprints from older indexes still verify until you re-index.
+v0.2.0. Indexes a 100-note vault in about 5 to 10 minutes with Claude Haiku for roughly $0.30. Local Ollama is supported. Vault sizes up to a few thousand notes are the target, and larger scales are unmeasured. Privacy redaction runs through one type-enforced wire boundary that covers every cloud egress (LLM and embeddings). Citation fingerprints are full-width 256-bit blake3, and legacy 64-bit fingerprints from older indexes still verify until you re-index.
 
 Issues, edge cases, and design discussions are welcome on the [issue tracker](https://github.com/radotsvetkov/memora/issues).
 

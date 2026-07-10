@@ -168,6 +168,10 @@ def verify(
         )
     except FileNotFoundError as exc:
         raise MemoraNotFound(f"failed to run {bin_path!r}: {exc}") from exc
+    except OSError as exc:
+        raise MemoraError(f"failed to run {bin_path!r}: {exc}") from exc
+    except subprocess.SubprocessError as exc:
+        raise MemoraError(f"`memora verify` did not complete: {exc}") from exc
 
     out = proc.stdout.strip()
     if not out:
@@ -182,6 +186,14 @@ def verify(
             f"could not parse `memora verify` output as JSON (exit {proc.returncode}): {exc}\n"
             f"stdout:\n{out}\nstderr:\n{proc.stderr.strip()}"
         ) from exc
+
+    if "checks" not in data or "problems" not in data:
+        raise MemoraError(
+            "`memora verify --json` output is missing expected fields "
+            "('checks'/'problems'). This usually means the installed `memora` "
+            f"CLI is a version memora-verify {__version__} does not understand.\n"
+            f"stdout:\n{out}"
+        )
 
     checks = [
         Check(

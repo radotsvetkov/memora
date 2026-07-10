@@ -171,22 +171,108 @@ fn extract_html_file(_path: &Path) -> Result<(String, Option<String>)> {
 }
 
 #[cfg(feature = "web")]
+const MAX_FETCH_REDIRECTS: u8 = 5;
+
+/// Reject loopback, private, link-local, and other non-public IP ranges so a
+/// fetched URL (or a redirect it issues) can't reach an internal service or a
+/// cloud metadata endpoint (e.g. 169.254.169.254). Manual redirect handling
+/// re-validates the target on every hop, since a public host can 30x to an
+/// internal address.
+#[cfg(feature = "web")]
+fn is_blocked_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_multicast()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                // 100.64.0.0/10 (carrier-grade NAT; some cloud metadata proxies sit here)
+                || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                // fc00::/7 (unique local)
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                // fe80::/10 (link-local)
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+#[cfg(feature = "web")]
+async fn validate_fetch_target(url: &reqwest::Url) -> Result<()> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("URL {url} has no host"))?
+        .to_string();
+    let port = url.port_or_known_default().unwrap_or(443);
+
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_blocked_ip(ip) {
+            bail!("refusing to fetch {url}: {ip} is not a public address");
+        }
+        return Ok(());
+    }
+
+    let addrs = tokio::task::spawn_blocking(move || {
+        use std::net::ToSocketAddrs;
+        (host.as_str(), port).to_socket_addrs()
+    })
+    .await
+    .context("resolve fetch host")?
+    .with_context(|| format!("resolve host for {url}"))?;
+
+    for addr in addrs {
+        if is_blocked_ip(addr.ip()) {
+            bail!(
+                "refusing to fetch {url}: resolves to non-public address {}",
+                addr.ip()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "web")]
 async fn fetch_and_extract(url: &str) -> Result<(String, Option<String>)> {
     let client = reqwest::Client::builder()
         .user_agent(concat!("memora-ingest/", env!("CARGO_PKG_VERSION")))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .context("build HTTP client")?;
-    let html = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("fetch {url}"))?
-        .error_for_status()
-        .with_context(|| format!("fetch {url}"))?
-        .text()
-        .await
-        .with_context(|| format!("read response body from {url}"))?;
-    Ok(extract_html(&html))
+
+    let mut current = reqwest::Url::parse(url).with_context(|| format!("parse URL {url}"))?;
+    for _ in 0..MAX_FETCH_REDIRECTS {
+        validate_fetch_target(&current).await?;
+        let response = client
+            .get(current.clone())
+            .send()
+            .await
+            .with_context(|| format!("fetch {current}"))?;
+        if response.status().is_redirection() {
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| anyhow!("redirect from {current} had no Location header"))?;
+            current = current
+                .join(location)
+                .with_context(|| format!("resolve redirect target {location} from {current}"))?;
+            continue;
+        }
+        let html = response
+            .error_for_status()
+            .with_context(|| format!("fetch {current}"))?
+            .text()
+            .await
+            .with_context(|| format!("read response body from {current}"))?;
+        return Ok(extract_html(&html));
+    }
+    bail!("too many redirects fetching {url} (max {MAX_FETCH_REDIRECTS})")
 }
 
 #[cfg(not(feature = "web"))]
@@ -349,6 +435,61 @@ mod tests {
         assert!(is_url("http://example.com"));
         assert!(!is_url("/local/file.html"));
         assert!(!is_url("file.txt"));
+    }
+
+    #[cfg(feature = "web")]
+    #[test]
+    fn is_blocked_ip_rejects_loopback_private_and_link_local() {
+        let blocked = [
+            "127.0.0.1",
+            "169.254.169.254", // cloud metadata endpoint
+            "10.0.0.5",
+            "192.168.1.1",
+            "172.16.0.1",
+            "100.64.0.1", // carrier-grade NAT
+            "0.0.0.0",
+            "::1",
+            "fe80::1",
+            "fc00::1",
+        ];
+        for ip in blocked {
+            assert!(
+                is_blocked_ip(ip.parse().expect("valid ip literal")),
+                "{ip} should be blocked"
+            );
+        }
+    }
+
+    #[cfg(feature = "web")]
+    #[test]
+    fn is_blocked_ip_allows_public_addresses() {
+        let allowed = ["93.184.216.34", "8.8.8.8", "2606:4700:4700::1111"];
+        for ip in allowed {
+            assert!(
+                !is_blocked_ip(ip.parse().expect("valid ip literal")),
+                "{ip} should not be blocked"
+            );
+        }
+    }
+
+    #[cfg(feature = "web")]
+    #[tokio::test]
+    async fn validate_fetch_target_rejects_ip_literal_metadata_endpoint() {
+        let url = reqwest::Url::parse("http://169.254.169.254/latest/meta-data/").unwrap();
+        let err = validate_fetch_target(&url)
+            .await
+            .expect_err("metadata endpoint must be rejected");
+        assert!(err.to_string().contains("not a public address"));
+    }
+
+    #[cfg(feature = "web")]
+    #[tokio::test]
+    async fn validate_fetch_target_rejects_loopback_hostname() {
+        let url = reqwest::Url::parse("http://localhost/").unwrap();
+        let err = validate_fetch_target(&url)
+            .await
+            .expect_err("localhost must be rejected");
+        assert!(err.to_string().contains("non-public address"));
     }
 
     #[test]

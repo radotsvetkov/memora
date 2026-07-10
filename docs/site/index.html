@@ -219,7 +219,7 @@
 <body>
 
 <nav>
-  <a class="brand" href="#top"><span class="dot"></span>memora<span class="ver">v0.1.29</span></a>
+  <a class="brand" href="#top"><span class="dot"></span>memora<span class="ver">v0.2.0</span></a>
   <div class="nav-links">
     <a href="#how">How it works</a>
     <a href="#verify">Verify in CI</a>
@@ -531,9 +531,9 @@
 
     <div id="t-ollama" class="tab-panel">
       <div class="panel-code">
-        <button class="copy" data-clip="ollama pull llama3.2:3b&#10;ollama pull nomic-embed-text">copy</button>
-        <span class="cmt"># Fully local: pull a model and an embedder</span><br>
-        ollama pull llama3.2:3b<br>
+        <button class="copy" data-clip="ollama pull qwen2.5:32b-instruct-q5_K_M&#10;ollama pull nomic-embed-text">copy</button>
+        <span class="cmt"># Fully local: pull a model and an embedder (below 32B, extraction quality drops)</span><br>
+        ollama pull qwen2.5:32b-instruct-q5_K_M<br>
         ollama pull <span class="str">nomic-embed-text</span><br><br>
         <span class="cmt"># Point memora at Ollama in .memora/config.toml, then query offline</span><br>
         memora <span class="kw">query</span> <span class="str">"summarize this week's decisions"</span> --vault ~/brain
@@ -569,7 +569,7 @@
       <a href="https://github.com/radotsvetkov/memora/releases">Releases</a>
       <a href="./docs/license.html">Apache-2.0</a>
     </div>
-    <div class="foot-note">v0.1.29 · provenance integrity, hash-proven · we tell you exactly where the guarantee ends.</div>
+    <div class="foot-note">v0.2.0 · provenance integrity, hash-proven · we tell you exactly where the guarantee ends.</div>
   </div>
 </footer>
 
