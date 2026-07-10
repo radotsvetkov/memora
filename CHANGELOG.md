@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-10
+
 ### Added
 - Python wrapper (`bindings/python`, `pip install memora-verify`): a thin, dependency-free package that shells out to the `memora` binary so Python AI teams can verify citations from their eval suite or CI. Exposes `verify()` → a structured `VerifyResult` and `assert_cited()` (raises on any unprovable citation). The binary is a prerequisite (bundled-binary wheels are roadmap). Mocked unit tests run without the binary; new `Python wrapper` CI workflow.
 - `memora report` — a self-contained, offline HTML overview of a vault: summary stats, an interactive force-directed claim graph (provenance, contradiction, and supersession edges), the contradictions/supersessions and stale dependencies that need attention, and the world map. One file, no server, no network, no CDN (system fonts only). All vault content is HTML-escaped and the embedded graph data is `\u`-escaped, so note content cannot inject markup. `--open` opens it in the browser.
